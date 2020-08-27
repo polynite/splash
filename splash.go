@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/zlib"
 	"crypto/sha1"
+	"encoding/hex"
 	"flag"
 	"io"
 	"io/ioutil"
@@ -18,12 +19,13 @@ var httpClient = &http.Client{}
 
 // Flags
 var (
-	platform    string
-	manifestID  string
-	installPath string
-	cachePath   string
-	fileFilter  string
-	cloudURL    string
+	platform           string
+	manifestID         string
+	installPath        string
+	cachePath          string
+	fileFilter         string
+	cloudURL           string
+	skipIntegrityCheck bool
 )
 
 func init() {
@@ -34,6 +36,7 @@ func init() {
 	flag.StringVar(&cachePath, "cache", "cache", "cache path")
 	flag.StringVar(&fileFilter, "files", "", "only download specific files")
 	flag.StringVar(&cloudURL, "cloud", "https://epicgames-download1.akamaized.net/Builds/Fortnite/CloudDir/", "cloud url")
+	flag.BoolVar(&skipIntegrityCheck, "skipcheck", false, "skip file integrity check")
 	flag.Parse()
 }
 
@@ -266,6 +269,36 @@ func main() {
 		}
 	}
 
-	// TODO: verify files
+	// Integrity check
+	if !skipIntegrityCheck {
+		log.Println("Verifying file integrity...")
+
+		for _, file := range manifestFiles {
+			filePath := filepath.Join(installPath, file.FileName)
+
+			// Open file
+			f, err := os.Open(filePath)
+			if err != nil {
+				log.Printf("Failed to open %s: %v\n", file.FileName, err)
+				continue
+			}
+			defer f.Close()
+
+			// Hash file
+			hasher := sha1.New()
+			if _, err := io.Copy(hasher, f); err != nil {
+				log.Printf("Failed to hash %s: %v\n", file.FileName, err)
+				continue
+			}
+
+			// Compare checksum
+			expectedHash := readPackedData(file.FileHash)
+			actualHash := hasher.Sum(nil)
+			if !bytes.Equal(actualHash, expectedHash) {
+				log.Printf("File %s is corrupt - got hash %s but want %s\n", file.FileName, hex.EncodeToString(actualHash), hex.EncodeToString(expectedHash))
+			}
+		}
+	}
+
 	log.Println("Done!")
 }
