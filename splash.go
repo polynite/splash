@@ -1,7 +1,11 @@
 package main
 
 import (
+	"bytes"
+	"compress/zlib"
+	"crypto/sha1"
 	"flag"
+	"io"
 	"io/ioutil"
 	"log"
 	"net/http"
@@ -32,8 +36,7 @@ func init() {
 
 func main() {
 	// Make working directories
-	os.Mkdir(cachePath, os.ModePerm)
-	os.Mkdir(installPath, os.ModePerm)
+	os.MkdirAll(cachePath, os.ModePerm)
 
 	var catalog *Catalog
 	var manifest *Manifest
@@ -103,4 +106,153 @@ func main() {
 	}
 
 	log.Printf("Manifest %s %s loaded.\n", manifest.AppNameString, manifest.BuildVersionString)
+
+	// Parse manifest
+	manifestFiles := make(map[string]ManifestFile)
+	manifestChunks := make(map[string]Chunk)
+	chunkReverseMap := make(map[string]int)
+	for _, file := range manifest.FileManifestList {
+		// Add file
+		manifestFiles[file.FileName] = file
+
+		// Add all chunks
+		for _, c := range file.FileChunkParts {
+			chunkReverseMap[c.GUID]++
+
+			if _, ok := manifestChunks[c.GUID]; !ok { // don't add duplicates
+				manifestChunks[c.GUID] = NewChunk(c.GUID, manifest.ChunkHashList[c.GUID], manifest.ChunkShaList[c.GUID], manifest.DataGroupList[c.GUID], manifest.ChunkFilesizeList[c.GUID])
+			}
+		}
+	}
+
+	log.Printf("Found %d files and %d chunks in manifest.\n", len(manifestFiles), len(manifestChunks))
+
+	// TODO: file filter
+
+	// Chunk cache
+	chunkCache := make(map[string][]byte)
+
+	// Download and assemble files
+	for _, file := range manifestFiles {
+		filePath := filepath.Join(installPath, file.FileName)
+
+		// Check if file already exists
+		if _, err := os.Stat(filePath); err == nil {
+			// Open file
+			diskFile, err := os.Open(filePath)
+			if err == nil {
+				defer diskFile.Close()
+
+				// Calculate checksum
+				hasher := sha1.New()
+				_, err := io.Copy(hasher, diskFile)
+				if err == nil {
+					// Compare checksum
+					if bytes.Equal(hasher.Sum(nil), readPackedData(file.FileHash)) {
+						// Remove any trailing chunks
+						for _, chunkPart := range file.FileChunkParts {
+							chunkReverseMap[chunkPart.GUID]--
+							if chunkReverseMap[chunkPart.GUID] < 1 {
+								delete(chunkCache, chunkPart.GUID)
+							}
+						}
+
+						log.Printf("File %s found on disk!\n", file.FileName)
+						continue
+					}
+				}
+			}
+		}
+
+		log.Printf("Downloading %s from %d chunks...\n", file.FileName, len(file.FileChunkParts))
+
+		// Create outfile
+		os.MkdirAll(filepath.Dir(filePath), os.ModePerm)
+		outFile, err := os.Create(filePath)
+		if err != nil {
+			log.Printf("Failed to create %s: %v\n", filePath, err)
+			continue
+		}
+		defer outFile.Close()
+
+		// Write chunk data
+		for _, chunkPart := range file.FileChunkParts {
+			chunk := manifestChunks[chunkPart.GUID]
+			chunkDataOffset := readPackedUint32(chunkPart.Offset)
+			chunkDataSize := readPackedUint32(chunkPart.Size)
+
+			var chunkReader io.ReadSeeker
+			if _, ok := chunkCache[chunk.GUID]; ok {
+				// Read from cache
+				chunkReader = bytes.NewReader(chunkCache[chunk.GUID])
+			} else {
+				// Download chunk
+				chunkData, err := chunk.Download(cloudURL)
+				if err != nil {
+					log.Printf("Failed to download chunk %s for file %s: %v\n", chunk.GUID, file.FileName, err)
+					continue
+				}
+
+				// Create new reader
+				chunkReader = bytes.NewReader(chunkData)
+
+				// Read chunk header
+				chunkHeader, err := readChunkHeader(chunkReader)
+				if err != nil {
+					log.Printf("Failed to read chunk header %s for file %s: %v\n", chunk.GUID, file.FileName, err)
+					continue
+				}
+
+				// Decompress if needed
+				if chunkHeader.StoredAs == 1 {
+					// Create decompressor
+					zlibReader, err := zlib.NewReader(chunkReader)
+					if err != nil {
+						log.Printf("Failed to create decompressor for chunk %s: %v\n", chunk.GUID, err)
+						continue
+					}
+
+					// Decompress entire chunk
+					chunkData, err = ioutil.ReadAll(zlibReader)
+					if err != nil {
+						log.Printf("Failed to decompress chunk %s: %v\n", chunk.GUID, err)
+						continue
+					}
+
+					// Set reader to decompressed data
+					chunkReader = bytes.NewReader(chunkData)
+				} else if chunkHeader.StoredAs != 0 {
+					log.Printf("Got unknown chunk (storedas: %d) %s for file %s\n", chunkHeader.StoredAs, chunk.GUID, file.FileName)
+					continue
+				}
+
+				// Store in cache if needed later
+				if chunkReverseMap[chunk.GUID] > 1 {
+					if chunkHeader.StoredAs == 0 { // chunkData still contains header here
+						chunkCache[chunk.GUID] = chunkData[62:]
+					} else {
+						chunkCache[chunk.GUID] = chunkData
+					}
+				}
+			}
+
+			// Write chunk to file
+			chunkReader.Seek(int64(chunkDataOffset), io.SeekCurrent)
+			_, err := io.CopyN(outFile, chunkReader, int64(chunkDataSize))
+			if err != nil {
+				log.Printf("Failed to write chunk %s to file %s: %v\n", chunk.GUID, file.FileName, err)
+				continue
+			}
+
+			// Chunk was used once
+			chunkReverseMap[chunk.GUID]--
+
+			// Check if we still need to store chunk in cache
+			if chunkReverseMap[chunk.GUID] < 1 {
+				delete(chunkCache, chunk.GUID)
+			}
+		}
+	}
+
+	// TODO: verify files
 }
