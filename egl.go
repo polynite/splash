@@ -44,6 +44,12 @@ func authenticate() (token string, err error) {
 	}
 	defer resp.Body.Close()
 
+	// Check response code
+	if resp.StatusCode != 200 {
+		err = fmt.Errorf("invalid status code %d", resp.StatusCode)
+		return
+	}
+
 	// Parse response
 	var respBody map[string]interface{}
 	err = json.NewDecoder(resp.Body).Decode(&respBody)
@@ -88,6 +94,12 @@ func fetchCatalog(platform string, namespace string, item string, app string, la
 		return
 	}
 	defer resp.Body.Close()
+
+	// Check response code
+	if resp.StatusCode != 200 {
+		err = fmt.Errorf("invalid status code %d", resp.StatusCode)
+		return
+	}
 
 	// Read body
 	data, err = ioutil.ReadAll(resp.Body)

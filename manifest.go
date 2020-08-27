@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"io/ioutil"
 	"os"
 )
@@ -15,6 +16,7 @@ type ManifestFile struct {
 		Offset string `json:"Offset"`
 		Size   string `json:"Size"`
 	} `json:"FileChunkParts"`
+	InstallTags []string `json:"InstallTags"`
 }
 
 // Manifest defines a manifest
@@ -66,6 +68,12 @@ func fetchManifest(url string) (manifest *Manifest, body []byte, err error) {
 		return
 	}
 	defer resp.Body.Close()
+
+	// Check response code
+	if resp.StatusCode != 200 {
+		err = fmt.Errorf("invalid status code %d", resp.StatusCode)
+		return
+	}
 
 	// Read body
 	body, err = ioutil.ReadAll(resp.Body)
