@@ -159,124 +159,126 @@ func main() {
 
 	// Download and assemble files
 	for _, file := range manifestFiles {
-		filePath := filepath.Join(installPath, file.FileName)
+		func() {
+			filePath := filepath.Join(installPath, file.FileName)
 
-		// Check if file already exists
-		if _, err := os.Stat(filePath); err == nil {
-			// Open file
-			diskFile, err := os.Open(filePath)
-			if err == nil {
-				defer diskFile.Close()
-
-				// Calculate checksum
-				hasher := sha1.New()
-				_, err := io.Copy(hasher, diskFile)
+			// Check if file already exists
+			if _, err := os.Stat(filePath); err == nil {
+				// Open file
+				diskFile, err := os.Open(filePath)
 				if err == nil {
-					// Compare checksum
-					if bytes.Equal(hasher.Sum(nil), readPackedData(file.FileHash)) {
-						// Remove any trailing chunks
-						for _, chunkPart := range file.FileChunkParts {
-							chunkReverseMap[chunkPart.GUID]--
-							if chunkReverseMap[chunkPart.GUID] < 1 {
-								delete(chunkCache, chunkPart.GUID)
+					// Calculate checksum
+					hasher := sha1.New()
+					_, err := io.Copy(hasher, diskFile)
+					diskFile.Close()
+
+					if err == nil {
+						// Compare checksum
+						if bytes.Equal(hasher.Sum(nil), readPackedData(file.FileHash)) {
+							// Remove any trailing chunks
+							for _, chunkPart := range file.FileChunkParts {
+								chunkReverseMap[chunkPart.GUID]--
+								if chunkReverseMap[chunkPart.GUID] < 1 {
+									delete(chunkCache, chunkPart.GUID)
+								}
 							}
+
+							log.Printf("File %s found on disk!\n", file.FileName)
+							return
+						}
+					}
+				}
+			}
+
+			log.Printf("Downloading %s from %d chunks...\n", file.FileName, len(file.FileChunkParts))
+
+			// Create outfile
+			os.MkdirAll(filepath.Dir(filePath), os.ModePerm)
+			outFile, err := os.Create(filePath)
+			if err != nil {
+				log.Printf("Failed to create %s: %v\n", filePath, err)
+				return
+			}
+			defer outFile.Close()
+
+			// Write chunk data
+			for _, chunkPart := range file.FileChunkParts {
+				chunk := manifestChunks[chunkPart.GUID]
+				chunkDataOffset := readPackedUint32(chunkPart.Offset)
+				chunkDataSize := readPackedUint32(chunkPart.Size)
+
+				var chunkReader io.ReadSeeker
+				if _, ok := chunkCache[chunk.GUID]; ok {
+					// Read from cache
+					chunkReader = bytes.NewReader(chunkCache[chunk.GUID])
+				} else {
+					// Download chunk
+					chunkData, err := chunk.Download(downloadURLs[rand.Intn(len(downloadURLs))])
+					if err != nil {
+						log.Printf("Failed to download chunk %s for file %s: %v\n", chunk.GUID, file.FileName, err)
+						continue
+					}
+
+					// Create new reader
+					chunkReader = bytes.NewReader(chunkData)
+
+					// Read chunk header
+					chunkHeader, err := readChunkHeader(chunkReader)
+					if err != nil {
+						log.Printf("Failed to read chunk header %s for file %s: %v\n", chunk.GUID, file.FileName, err)
+						continue
+					}
+
+					// Decompress if needed
+					if chunkHeader.StoredAs == 1 {
+						// Create decompressor
+						zlibReader, err := zlib.NewReader(chunkReader)
+						if err != nil {
+							log.Printf("Failed to create decompressor for chunk %s: %v\n", chunk.GUID, err)
+							continue
 						}
 
-						log.Printf("File %s found on disk!\n", file.FileName)
+						// Decompress entire chunk
+						chunkData, err = ioutil.ReadAll(zlibReader)
+						if err != nil {
+							log.Printf("Failed to decompress chunk %s: %v\n", chunk.GUID, err)
+							continue
+						}
+
+						// Set reader to decompressed data
+						chunkReader = bytes.NewReader(chunkData)
+					} else if chunkHeader.StoredAs != 0 {
+						log.Printf("Got unknown chunk (storedas: %d) %s for file %s\n", chunkHeader.StoredAs, chunk.GUID, file.FileName)
 						continue
 					}
+
+					// Store in cache if needed later
+					if chunkReverseMap[chunk.GUID] > 1 {
+						if chunkHeader.StoredAs == 0 { // chunkData still contains header here
+							chunkCache[chunk.GUID] = chunkData[62:]
+						} else {
+							chunkCache[chunk.GUID] = chunkData
+						}
+					}
 				}
-			}
-		}
 
-		log.Printf("Downloading %s from %d chunks...\n", file.FileName, len(file.FileChunkParts))
-
-		// Create outfile
-		os.MkdirAll(filepath.Dir(filePath), os.ModePerm)
-		outFile, err := os.Create(filePath)
-		if err != nil {
-			log.Printf("Failed to create %s: %v\n", filePath, err)
-			continue
-		}
-		defer outFile.Close()
-
-		// Write chunk data
-		for _, chunkPart := range file.FileChunkParts {
-			chunk := manifestChunks[chunkPart.GUID]
-			chunkDataOffset := readPackedUint32(chunkPart.Offset)
-			chunkDataSize := readPackedUint32(chunkPart.Size)
-
-			var chunkReader io.ReadSeeker
-			if _, ok := chunkCache[chunk.GUID]; ok {
-				// Read from cache
-				chunkReader = bytes.NewReader(chunkCache[chunk.GUID])
-			} else {
-				// Download chunk
-				chunkData, err := chunk.Download(downloadURLs[rand.Intn(len(downloadURLs))])
+				// Write chunk to file
+				chunkReader.Seek(int64(chunkDataOffset), io.SeekCurrent)
+				_, err := io.CopyN(outFile, chunkReader, int64(chunkDataSize))
 				if err != nil {
-					log.Printf("Failed to download chunk %s for file %s: %v\n", chunk.GUID, file.FileName, err)
+					log.Printf("Failed to write chunk %s to file %s: %v\n", chunk.GUID, file.FileName, err)
 					continue
 				}
 
-				// Create new reader
-				chunkReader = bytes.NewReader(chunkData)
+				// Chunk was used once
+				chunkReverseMap[chunk.GUID]--
 
-				// Read chunk header
-				chunkHeader, err := readChunkHeader(chunkReader)
-				if err != nil {
-					log.Printf("Failed to read chunk header %s for file %s: %v\n", chunk.GUID, file.FileName, err)
-					continue
-				}
-
-				// Decompress if needed
-				if chunkHeader.StoredAs == 1 {
-					// Create decompressor
-					zlibReader, err := zlib.NewReader(chunkReader)
-					if err != nil {
-						log.Printf("Failed to create decompressor for chunk %s: %v\n", chunk.GUID, err)
-						continue
-					}
-
-					// Decompress entire chunk
-					chunkData, err = ioutil.ReadAll(zlibReader)
-					if err != nil {
-						log.Printf("Failed to decompress chunk %s: %v\n", chunk.GUID, err)
-						continue
-					}
-
-					// Set reader to decompressed data
-					chunkReader = bytes.NewReader(chunkData)
-				} else if chunkHeader.StoredAs != 0 {
-					log.Printf("Got unknown chunk (storedas: %d) %s for file %s\n", chunkHeader.StoredAs, chunk.GUID, file.FileName)
-					continue
-				}
-
-				// Store in cache if needed later
-				if chunkReverseMap[chunk.GUID] > 1 {
-					if chunkHeader.StoredAs == 0 { // chunkData still contains header here
-						chunkCache[chunk.GUID] = chunkData[62:]
-					} else {
-						chunkCache[chunk.GUID] = chunkData
-					}
+				// Check if we still need to store chunk in cache
+				if chunkReverseMap[chunk.GUID] < 1 {
+					delete(chunkCache, chunk.GUID)
 				}
 			}
-
-			// Write chunk to file
-			chunkReader.Seek(int64(chunkDataOffset), io.SeekCurrent)
-			_, err := io.CopyN(outFile, chunkReader, int64(chunkDataSize))
-			if err != nil {
-				log.Printf("Failed to write chunk %s to file %s: %v\n", chunk.GUID, file.FileName, err)
-				continue
-			}
-
-			// Chunk was used once
-			chunkReverseMap[chunk.GUID]--
-
-			// Check if we still need to store chunk in cache
-			if chunkReverseMap[chunk.GUID] < 1 {
-				delete(chunkCache, chunk.GUID)
-			}
-		}
+		}()
 	}
 
 	// Integrity check
@@ -292,11 +294,13 @@ func main() {
 				log.Printf("Failed to open %s: %v\n", file.FileName, err)
 				continue
 			}
-			defer f.Close()
 
 			// Hash file
 			hasher := sha1.New()
-			if _, err := io.Copy(hasher, f); err != nil {
+			_, err = io.Copy(hasher, f)
+			f.Close()
+
+			if err != nil {
 				log.Printf("Failed to hash %s: %v\n", file.FileName, err)
 				continue
 			}
