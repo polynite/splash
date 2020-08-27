@@ -35,7 +35,7 @@ func init() {
 	flag.StringVar(&installPath, "installdir", "files", "install path")
 	flag.StringVar(&cachePath, "cache", "cache", "cache path")
 	flag.StringVar(&fileFilter, "files", "", "only download specific files")
-	flag.StringVar(&cloudURL, "cloud", "https://epicgames-download1.akamaized.net/Builds/Fortnite/CloudDir/", "cloud url")
+	flag.StringVar(&cloudURL, "cloud", "http://epicgames-download1.akamaized.net/Builds/Fortnite/CloudDir/", "cloud url")
 	flag.BoolVar(&skipIntegrityCheck, "skipcheck", false, "skip file integrity check")
 	flag.Parse()
 }
