@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 var httpClient = &http.Client{}
@@ -21,6 +22,7 @@ var (
 	manifestID  string
 	installPath string
 	cachePath   string
+	fileFilter  string
 	cloudURL    string
 )
 
@@ -30,6 +32,7 @@ func init() {
 	flag.StringVar(&manifestID, "manifest", "", "download a specific manifest")
 	flag.StringVar(&installPath, "installdir", "files", "install path")
 	flag.StringVar(&cachePath, "cache", "cache", "cache path")
+	flag.StringVar(&fileFilter, "files", "", "only download specific files")
 	flag.StringVar(&cloudURL, "cloud", "https://epicgames-download1.akamaized.net/Builds/Fortnite/CloudDir/", "cloud url")
 	flag.Parse()
 }
@@ -127,7 +130,16 @@ func main() {
 
 	log.Printf("Found %d files and %d chunks in manifest.\n", len(manifestFiles), len(manifestChunks))
 
-	// TODO: file filter
+	// File filter
+	if fileFilter != "" {
+		tempFiles := make(map[string]ManifestFile)
+		for _, fileName := range strings.Split(fileFilter, ",") {
+			if f, ok := manifestFiles[fileName]; ok {
+				tempFiles[fileName] = f
+			}
+		}
+		manifestFiles = tempFiles
+	}
 
 	// Chunk cache
 	chunkCache := make(map[string][]byte)
@@ -255,4 +267,5 @@ func main() {
 	}
 
 	// TODO: verify files
+	log.Println("Done!")
 }
