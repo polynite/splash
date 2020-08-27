@@ -35,7 +35,7 @@ type ChunkHeader struct {
 
 // GetURL builds a url
 func (c *Chunk) GetURL(cloudURL string) string {
-	return fmt.Sprintf("%sChunksV3/%02d/%s_%s.chunk", cloudURL, c.DataGroup, c.Hash, c.GUID)
+	return fmt.Sprintf("%s/Builds/Fortnite/CloudDir/ChunksV3/%02d/%s_%s.chunk", cloudURL, c.DataGroup, c.Hash, c.GUID)
 }
 
 // Download fetches the chunk from the internet

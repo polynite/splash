@@ -6,13 +6,16 @@ import (
 	"crypto/sha1"
 	"encoding/hex"
 	"flag"
+	"fmt"
 	"io"
 	"io/ioutil"
 	"log"
+	"math/rand"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 var httpClient = &http.Client{}
@@ -24,20 +27,27 @@ var (
 	installPath        string
 	cachePath          string
 	fileFilter         string
-	cloudURL           string
+	downloadURLs       []string
 	skipIntegrityCheck bool
 )
 
+const defaultDownloadURL = "http://epicgames-download1.akamaized.net"
+
 func init() {
+	// Seed random
+	rand.Seed(time.Now().Unix())
+
 	// Parse flags
 	flag.StringVar(&platform, "platform", "Windows", "platform to download for")
 	flag.StringVar(&manifestID, "manifest", "", "download a specific manifest")
-	flag.StringVar(&installPath, "installdir", "files", "install path")
+	flag.StringVar(&installPath, "install-dir", "files", "install path")
 	flag.StringVar(&cachePath, "cache", "cache", "cache path")
 	flag.StringVar(&fileFilter, "files", "", "only download specific files")
-	flag.StringVar(&cloudURL, "cloud", "http://epicgames-download1.akamaized.net/Builds/Fortnite/CloudDir/", "cloud url")
+	dlUrls := flag.String("url", defaultDownloadURL, "download url")
 	flag.BoolVar(&skipIntegrityCheck, "skipcheck", false, "skip file integrity check")
 	flag.Parse()
+
+	downloadURLs = strings.Split(*dlUrls, ",")
 }
 
 func main() {
@@ -89,7 +99,7 @@ func main() {
 		log.Printf("Fetching manifest %s...", manifestID)
 
 		var err error
-		manifest, _, err = fetchManifest(cloudURL + manifestID + ".manifest")
+		manifest, _, err = fetchManifest(fmt.Sprintf("%s/Builds/Fortnite/CloudDir/%s.manifest", defaultDownloadURL, manifestID))
 		if err != nil {
 			log.Fatalf("Failed to fetch manifest: %v", err)
 		}
@@ -202,7 +212,7 @@ func main() {
 				chunkReader = bytes.NewReader(chunkCache[chunk.GUID])
 			} else {
 				// Download chunk
-				chunkData, err := chunk.Download(cloudURL)
+				chunkData, err := chunk.Download(downloadURLs[rand.Intn(len(downloadURLs))])
 				if err != nil {
 					log.Printf("Failed to download chunk %s for file %s: %v\n", chunk.GUID, file.FileName, err)
 					continue
