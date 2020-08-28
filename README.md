@@ -11,6 +11,7 @@ _Incredibly_ fast download/update tool.
 * To change the download directory, use `-install-dir=<path>`.
 
 For example, to download build `10.0-CL-7658179` to `C:\Games\FN` use `splash -manifest=wcfjh9c-okLtEOiDMkG8VzIC1p-ENg -install-dir=C:\Games\FN`.  
+
 If you wanted to only download the main binary and launcher for `13.30-CL-13884634` use `splash -manifest=__d-73Y9siJhxSaCRE6egZe3gbpjNw -files=FortniteGame/Binaries/Win64/FortniteClient-Win64-Shipping.exe,FortniteGame/Binaries/Win64/FortniteLauncher.exe`.
 
 ## Building
