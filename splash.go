@@ -45,9 +45,9 @@ func init() {
 	// Parse flags
 	flag.StringVar(&platform, "platform", "Windows", "platform to download for")
 	flag.StringVar(&manifestID, "manifest", "", "download a specific manifest")
-	flag.StringVar(&installPath, "install-dir", "files", "install path")
-	flag.StringVar(&cachePath, "cache", "cache", "cache path")
-	flag.StringVar(&fileFilter, "files", "", "only download specific files")
+	flag.StringVar(&installPath, "install-dir", "files", "folder to write downloaded files to")
+	flag.StringVar(&cachePath, "cache", "", "path to folder for caching manifest and catalog")
+	flag.StringVar(&fileFilter, "files", "", "comma-separated list of files to download")
 	dlUrls := flag.String("url", defaultDownloadURL, "download url")
 	flag.BoolVar(&skipIntegrityCheck, "skipcheck", false, "skip file integrity check")
 	flag.IntVar(&workerCount, "workers", 10, "amount of workers")
@@ -61,14 +61,16 @@ func init() {
 
 func main() {
 	// Make working directories
-	os.MkdirAll(cachePath, os.ModePerm)
+	if cachePath != "" {
+		os.MkdirAll(cachePath, os.ModePerm)
+	}
 
 	var catalog *Catalog
 	var manifest *Manifest
 
 	// Load catalog
 	catalogCachePath := filepath.Join(cachePath, "catalog.json")
-	if _, err := os.Stat(catalogCachePath); err == nil { // read catalog from cache
+	if _, err := os.Stat(catalogCachePath); err == nil && cachePath != "" { // read catalog from cache
 		log.Println("Loading catalog from cache...")
 
 		// Read from disk
@@ -92,7 +94,9 @@ func main() {
 		}
 
 		// Save to cache
-		ioutil.WriteFile(catalogCachePath, catalogBytes, 0644)
+		if cachePath != "" {
+			ioutil.WriteFile(catalogCachePath, catalogBytes, 0644)
+		}
 	}
 
 	// Sanity check catalog
@@ -112,7 +116,7 @@ func main() {
 		if err != nil {
 			log.Fatalf("Failed to fetch manifest: %v", err)
 		}
-	} else if _, err := os.Stat(manifestCachePath); err == nil { // read manifest from disk
+	} else if _, err := os.Stat(manifestCachePath); err == nil && cachePath != "" { // read manifest from disk
 		log.Println("Loading manifest from cache...")
 
 		manifest, err = readManifestFile(manifestCachePath)
@@ -127,7 +131,9 @@ func main() {
 		if err != nil {
 			log.Fatalf("Failed to fetch manifest: %v", err)
 		}
-		ioutil.WriteFile(manifestCachePath, manifestBytes, 0644)
+		if cachePath != "" {
+			ioutil.WriteFile(manifestCachePath, manifestBytes, 0644)
+		}
 	}
 
 	log.Printf("Manifest %s %s loaded.\n", manifest.AppNameString, manifest.BuildVersionString)
