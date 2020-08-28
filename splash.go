@@ -132,9 +132,11 @@ func main() {
 
 	log.Printf("Manifest %s %s loaded.\n", manifest.AppNameString, manifest.BuildVersionString)
 
-	// Parse manifest
 	manifestFiles := make(map[string]ManifestFile)
 	manifestChunks := make(map[string]Chunk)
+	checkedFiles := make(map[string]ManifestFile)
+
+	// Parse manifest
 	for _, file := range manifest.FileManifestList {
 		// Add file
 		manifestFiles[file.FileName] = file
@@ -163,7 +165,7 @@ func main() {
 	}
 
 	// Download and assemble files
-	for _, file := range manifestFiles {
+	for k, file := range manifestFiles {
 		func() {
 			filePath := filepath.Join(installPath, file.FileName)
 
@@ -186,6 +188,7 @@ func main() {
 							}
 
 							log.Printf("File %s found on disk!\n", file.FileName)
+							checkedFiles[k] = file
 							return
 						}
 					}
@@ -259,7 +262,12 @@ func main() {
 	if !skipIntegrityCheck {
 		log.Println("Verifying file integrity...")
 
-		for _, file := range manifestFiles {
+		for k, file := range manifestFiles {
+			// Skip prechecked files
+			if _, ok := checkedFiles[k]; ok {
+				continue
+			}
+
 			filePath := filepath.Join(installPath, file.FileName)
 
 			// Open file
