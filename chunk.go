@@ -20,6 +20,25 @@ type Chunk struct {
 	FileSize  int64
 }
 
+// ChunkPart defines a part of a specific chunk
+type ChunkPart struct {
+	Offset uint32
+	Size   uint32
+}
+
+// ChunkJob defines a job
+type ChunkJob struct {
+	ID    int
+	Chunk Chunk
+	Part  ChunkPart
+}
+
+// ChunkJobResult defines a result
+type ChunkJobResult struct {
+	Job    ChunkJob
+	Reader io.ReadSeeker
+}
+
 // ChunkHeader defines the binary chunk header
 type ChunkHeader struct {
 	Magic              uint32 // 0xB1FE3AA2

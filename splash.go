@@ -15,10 +15,14 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
 var httpClient = &http.Client{}
+var chunkCache = make(map[string][]byte)
+var chunkParentCount = make(map[string]int)
+var cacheLock sync.Mutex
 
 // Flags
 var (
@@ -29,6 +33,7 @@ var (
 	fileFilter         string
 	downloadURLs       []string
 	skipIntegrityCheck bool
+	workerCount        int
 )
 
 const defaultDownloadURL = "http://epicgames-download1.akamaized.net"
@@ -45,9 +50,13 @@ func init() {
 	flag.StringVar(&fileFilter, "files", "", "only download specific files")
 	dlUrls := flag.String("url", defaultDownloadURL, "download url")
 	flag.BoolVar(&skipIntegrityCheck, "skipcheck", false, "skip file integrity check")
+	flag.IntVar(&workerCount, "workers", 10, "amount of workers")
 	flag.Parse()
 
 	downloadURLs = strings.Split(*dlUrls, ",")
+
+	// Set http timeout
+	httpClient.Timeout = 30 * time.Second
 }
 
 func main() {
@@ -126,14 +135,13 @@ func main() {
 	// Parse manifest
 	manifestFiles := make(map[string]ManifestFile)
 	manifestChunks := make(map[string]Chunk)
-	chunkReverseMap := make(map[string]int)
 	for _, file := range manifest.FileManifestList {
 		// Add file
 		manifestFiles[file.FileName] = file
 
 		// Add all chunks
 		for _, c := range file.FileChunkParts {
-			chunkReverseMap[c.GUID]++
+			chunkParentCount[c.GUID]++
 
 			if _, ok := manifestChunks[c.GUID]; !ok { // don't add duplicates
 				manifestChunks[c.GUID] = NewChunk(c.GUID, manifest.ChunkHashList[c.GUID], manifest.ChunkShaList[c.GUID], manifest.DataGroupList[c.GUID], manifest.ChunkFilesizeList[c.GUID])
@@ -153,9 +161,6 @@ func main() {
 		}
 		manifestFiles = tempFiles
 	}
-
-	// Chunk cache
-	chunkCache := make(map[string][]byte)
 
 	// Download and assemble files
 	for _, file := range manifestFiles {
@@ -177,10 +182,7 @@ func main() {
 						if bytes.Equal(hasher.Sum(nil), readPackedData(file.FileHash)) {
 							// Remove any trailing chunks
 							for _, chunkPart := range file.FileChunkParts {
-								chunkReverseMap[chunkPart.GUID]--
-								if chunkReverseMap[chunkPart.GUID] < 1 {
-									delete(chunkCache, chunkPart.GUID)
-								}
+								chunkUsed(chunkPart.GUID)
 							}
 
 							log.Printf("File %s found on disk!\n", file.FileName)
@@ -201,83 +203,55 @@ func main() {
 			}
 			defer outFile.Close()
 
-			// Write chunk data
-			for _, chunkPart := range file.FileChunkParts {
-				chunk := manifestChunks[chunkPart.GUID]
-				chunkDataOffset := readPackedUint32(chunkPart.Offset)
-				chunkDataSize := readPackedUint32(chunkPart.Size)
+			// Parse chunk parts
+			chunkPartCount := len(file.FileChunkParts)
+			chunkJobs := make([]ChunkJob, chunkPartCount)
+			jobs := make(chan ChunkJob, chunkPartCount)
+			for i, chunkPart := range file.FileChunkParts {
+				chunkJobs[i] = ChunkJob{ID: i, Chunk: manifestChunks[chunkPart.GUID], Part: ChunkPart{Offset: readPackedUint32(chunkPart.Offset), Size: readPackedUint32(chunkPart.Size)}}
+				jobs <- chunkJobs[i]
+			}
 
-				var chunkReader io.ReadSeeker
-				if _, ok := chunkCache[chunk.GUID]; ok {
-					// Read from cache
-					chunkReader = bytes.NewReader(chunkCache[chunk.GUID])
-				} else {
-					// Download chunk
-					chunkData, err := chunk.Download(downloadURLs[rand.Intn(len(downloadURLs))])
-					if err != nil {
-						log.Printf("Failed to download chunk %s for file %s: %v\n", chunk.GUID, file.FileName, err)
-						continue
-					}
+			results := make(chan ChunkJobResult, chunkPartCount)
+			orderedResults := make(chan ChunkJobResult, chunkPartCount)
 
-					// Create new reader
-					chunkReader = bytes.NewReader(chunkData)
+			// Order results as they come in
+			go func() {
+				resultsBuffer := make(map[int]ChunkJobResult)
+				for result := range results {
+					resultsBuffer[result.Job.ID] = result
 
-					// Read chunk header
-					chunkHeader, err := readChunkHeader(chunkReader)
-					if err != nil {
-						log.Printf("Failed to read chunk header %s for file %s: %v\n", chunk.GUID, file.FileName, err)
-						continue
-					}
-
-					// Decompress if needed
-					if chunkHeader.StoredAs == 1 {
-						// Create decompressor
-						zlibReader, err := zlib.NewReader(chunkReader)
-						if err != nil {
-							log.Printf("Failed to create decompressor for chunk %s: %v\n", chunk.GUID, err)
-							continue
-						}
-
-						// Decompress entire chunk
-						chunkData, err = ioutil.ReadAll(zlibReader)
-						if err != nil {
-							log.Printf("Failed to decompress chunk %s: %v\n", chunk.GUID, err)
-							continue
-						}
-
-						// Set reader to decompressed data
-						chunkReader = bytes.NewReader(chunkData)
-					} else if chunkHeader.StoredAs != 0 {
-						log.Printf("Got unknown chunk (storedas: %d) %s for file %s\n", chunkHeader.StoredAs, chunk.GUID, file.FileName)
-						continue
-					}
-
-					// Store in cache if needed later
-					if chunkReverseMap[chunk.GUID] > 1 {
-						if chunkHeader.StoredAs == 0 { // chunkData still contains header here
-							chunkCache[chunk.GUID] = chunkData[62:]
-						} else {
-							chunkCache[chunk.GUID] = chunkData
+				loop:
+					if len(chunkJobs) > 0 {
+						if res, ok := resultsBuffer[chunkJobs[0].ID]; ok {
+							orderedResults <- res
+							chunkJobs = chunkJobs[1:]
+							delete(resultsBuffer, res.Job.ID)
+							goto loop
 						}
 					}
 				}
+			}()
 
-				// Write chunk to file
-				chunkReader.Seek(int64(chunkDataOffset), io.SeekCurrent)
-				_, err := io.CopyN(outFile, chunkReader, int64(chunkDataSize))
+			// Spawn workers
+			for i := 0; i < workerCount; i++ {
+				go chunkWorker(jobs, results)
+			}
+
+			// Handle results
+			for i := 0; i < chunkPartCount; i++ {
+				result := <-orderedResults
+
+				// Write chunk part to file
+				result.Reader.Seek(int64(result.Job.Part.Offset), io.SeekCurrent)
+				_, err := io.CopyN(outFile, result.Reader, int64(result.Job.Part.Size))
 				if err != nil {
-					log.Printf("Failed to write chunk %s to file %s: %v\n", chunk.GUID, file.FileName, err)
+					log.Printf("Failed to write chunk %s to file %s: %v\n", result.Job.Chunk.GUID, file.FileName, err)
 					continue
 				}
-
-				// Chunk was used once
-				chunkReverseMap[chunk.GUID]--
-
-				// Check if we still need to store chunk in cache
-				if chunkReverseMap[chunk.GUID] < 1 {
-					delete(chunkCache, chunk.GUID)
-				}
 			}
+			close(jobs)
+			close(results)
 		}()
 	}
 
@@ -315,4 +289,89 @@ func main() {
 	}
 
 	log.Println("Done!")
+}
+
+func chunkUsed(guid string) {
+	// Chunk was used once
+	chunkParentCount[guid]--
+
+	// Check if we still need to store chunk in cache
+	if chunkParentCount[guid] < 1 {
+		delete(chunkCache, guid)
+	}
+}
+
+func chunkWorker(jobs chan ChunkJob, results chan<- ChunkJobResult) {
+	for j := range jobs {
+		var chunkReader io.ReadSeeker
+		cacheLock.Lock()
+		if _, ok := chunkCache[j.Chunk.GUID]; ok {
+			// Read from cache
+			chunkReader = bytes.NewReader(chunkCache[j.Chunk.GUID])
+
+			cacheLock.Unlock()
+		} else {
+			cacheLock.Unlock()
+
+			// Download chunk
+			chunkData, err := j.Chunk.Download(downloadURLs[rand.Intn(len(downloadURLs))])
+			if err != nil {
+				log.Printf("Failed to download chunk %s: %v\n", j.Chunk.GUID, err)
+				jobs <- j // requeue
+				continue
+			}
+
+			// Create new reader
+			chunkReader = bytes.NewReader(chunkData)
+
+			// Read chunk header
+			chunkHeader, err := readChunkHeader(chunkReader)
+			if err != nil {
+				log.Printf("Failed to read chunk header %s: %v\n", j.Chunk.GUID, err)
+				continue
+			}
+
+			// Decompress if needed
+			if chunkHeader.StoredAs == 1 {
+				// Create decompressor
+				zlibReader, err := zlib.NewReader(chunkReader)
+				if err != nil {
+					log.Printf("Failed to create decompressor for chunk %s: %v\n", j.Chunk.GUID, err)
+					continue
+				}
+
+				// Decompress entire chunk
+				chunkData, err = ioutil.ReadAll(zlibReader)
+				if err != nil {
+					log.Printf("Failed to decompress chunk %s: %v\n", j.Chunk.GUID, err)
+					continue
+				}
+
+				// Set reader to decompressed data
+				chunkReader = bytes.NewReader(chunkData)
+			} else if chunkHeader.StoredAs != 0 {
+				log.Printf("Got unknown chunk (storedas: %d) %s\n", chunkHeader.StoredAs, j.Chunk.GUID)
+				continue
+			}
+
+			// Store in cache if needed later
+			cacheLock.Lock()
+			if chunkParentCount[j.Chunk.GUID] > 1 {
+				if chunkHeader.StoredAs == 0 { // chunkData still contains header here
+					chunkCache[j.Chunk.GUID] = chunkData[62:]
+				} else {
+					chunkCache[j.Chunk.GUID] = chunkData
+				}
+			}
+			cacheLock.Unlock()
+		}
+
+		// Chunk was used once
+		cacheLock.Lock()
+		chunkUsed(j.Chunk.GUID)
+		cacheLock.Unlock()
+
+		// Pass result
+		results <- ChunkJobResult{Job: j, Reader: chunkReader}
+	}
 }
