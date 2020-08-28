@@ -336,6 +336,7 @@ func chunkWorker(jobs chan ChunkJob, results chan<- ChunkJobResult) {
 			chunkHeader, err := readChunkHeader(chunkReader)
 			if err != nil {
 				log.Printf("Failed to read chunk header %s: %v\n", j.Chunk.GUID, err)
+				jobs <- j
 				continue
 			}
 
@@ -345,6 +346,7 @@ func chunkWorker(jobs chan ChunkJob, results chan<- ChunkJobResult) {
 				zlibReader, err := zlib.NewReader(chunkReader)
 				if err != nil {
 					log.Printf("Failed to create decompressor for chunk %s: %v\n", j.Chunk.GUID, err)
+					jobs <- j
 					continue
 				}
 
@@ -352,6 +354,7 @@ func chunkWorker(jobs chan ChunkJob, results chan<- ChunkJobResult) {
 				chunkData, err = ioutil.ReadAll(zlibReader)
 				if err != nil {
 					log.Printf("Failed to decompress chunk %s: %v\n", j.Chunk.GUID, err)
+					jobs <- j
 					continue
 				}
 
@@ -359,6 +362,7 @@ func chunkWorker(jobs chan ChunkJob, results chan<- ChunkJobResult) {
 				chunkReader = bytes.NewReader(chunkData)
 			} else if chunkHeader.StoredAs != 0 {
 				log.Printf("Got unknown chunk (storedas: %d) %s\n", chunkHeader.StoredAs, j.Chunk.GUID)
+				jobs <- j
 				continue
 			}
 
