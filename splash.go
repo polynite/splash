@@ -69,42 +69,44 @@ func main() {
 	var manifest *Manifest
 
 	// Load catalog
-	catalogCachePath := filepath.Join(cachePath, "catalog.json")
-	if _, err := os.Stat(catalogCachePath); err == nil && cachePath != "" { // read catalog from cache
-		log.Println("Loading catalog from cache...")
+	if manifestID == "" {
+		catalogCachePath := filepath.Join(cachePath, "catalog.json")
+		if _, err := os.Stat(catalogCachePath); err == nil && cachePath != "" { // read catalog from cache
+			log.Println("Loading catalog from cache...")
 
-		// Read from disk
-		catalog, err = readCatalogFile(catalogCachePath)
-		if err != nil {
-			log.Fatalf("Failed to load catalog: %v", err)
-		}
-	} else { // otherwise, fetch latest
-		log.Println("Fetching latest catalog...")
+			// Read from disk
+			catalog, err = readCatalogFile(catalogCachePath)
+			if err != nil {
+				log.Fatalf("Failed to load catalog: %v", err)
+			}
+		} else { // otherwise, fetch latest
+			log.Println("Fetching latest catalog...")
 
-		// Fetch from MCP
-		catalogBytes, err := fetchCatalog(platform, "fn", "4fe75bbc5a674f4f9b356b5c90567da5", "Fortnite", "Live")
-		if err != nil {
-			log.Fatalf("Failed to fetch catalog: %v", err)
+			// Fetch from MCP
+			catalogBytes, err := fetchCatalog(platform, "fn", "4fe75bbc5a674f4f9b356b5c90567da5", "Fortnite", "Live")
+			if err != nil {
+				log.Fatalf("Failed to fetch catalog: %v", err)
+			}
+
+			// Parse data
+			catalog, err = parseCatalog(catalogBytes)
+			if err != nil {
+				log.Fatalf("Failed to parse catalog: %v", err)
+			}
+
+			// Save to cache
+			if cachePath != "" {
+				ioutil.WriteFile(catalogCachePath, catalogBytes, 0644)
+			}
 		}
 
-		// Parse data
-		catalog, err = parseCatalog(catalogBytes)
-		if err != nil {
-			log.Fatalf("Failed to parse catalog: %v", err)
+		// Sanity check catalog
+		if len(catalog.Elements) != 1 || len(catalog.Elements[0].Manifests) < 1 {
+			log.Fatal("Unsupported catalog")
 		}
 
-		// Save to cache
-		if cachePath != "" {
-			ioutil.WriteFile(catalogCachePath, catalogBytes, 0644)
-		}
+		log.Printf("Catalog %s (%s) %s loaded.\n", catalog.Elements[0].AppName, catalog.Elements[0].LabelName, catalog.Elements[0].BuildVersion)
 	}
-
-	// Sanity check catalog
-	if len(catalog.Elements) != 1 || len(catalog.Elements[0].Manifests) < 1 {
-		log.Fatal("Unsupported catalog")
-	}
-
-	log.Printf("Catalog %s (%s) %s loaded.\n", catalog.Elements[0].AppName, catalog.Elements[0].LabelName, catalog.Elements[0].BuildVersion)
 
 	// Load manifest
 	manifestCachePath := filepath.Join(cachePath, "manifest.json")
