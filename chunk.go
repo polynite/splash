@@ -67,7 +67,7 @@ func (c *Chunk) Download(cloudURL string) (data []byte, err error) {
 	defer resp.Body.Close()
 
 	// Check response code
-	if resp.StatusCode != 200 {
+	if resp.StatusCode/100 != 2 {
 		err = fmt.Errorf("invalid status code %d", resp.StatusCode)
 		return
 	}
