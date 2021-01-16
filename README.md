@@ -6,7 +6,7 @@ _Incredibly_ fast download/update tool.
 1. Run `splash -h` to see all available options.
 
 ## Common use-cases
-* To download a specific manifest from file, use `-manifest-file=<path to manifest>`.
+* To download a specific manifest drag and drop the manifest file on top of the splash binary, or use `-manifest-file=<path to manifest>`.
 * To download only specific files, use `-files=<files to download>`.
 * To change the download directory, use `-install-dir=<path>`.
 

@@ -46,12 +46,16 @@ func init() {
 	flag.StringVar(&platform, "platform", "Windows", "platform to download for")
 	//flag.StringVar(&manifestID, "manifest", "", "download a specific manifest")
 	flag.StringVar(&manifestPath, "manifest-file", "", "download a specific manifest")
-	flag.StringVar(&installPath, "install-dir", "files", "folder to write downloaded files to")
+	flag.StringVar(&installPath, "install-dir", "", "folder to write downloaded files to")
 	flag.StringVar(&fileFilter, "files", "", "comma-separated list of files to download")
 	dlUrls := flag.String("url", defaultDownloadURL, "download url")
 	flag.BoolVar(&skipIntegrityCheck, "skipcheck", false, "skip file integrity check")
 	flag.IntVar(&workerCount, "workers", 10, "amount of workers")
 	flag.Parse()
+
+	if manifestPath == "" {
+		manifestPath = flag.Arg(0)
+	}
 
 	downloadURLs = strings.Split(*dlUrls, ",")
 
@@ -145,6 +149,11 @@ func main() {
 			}
 		}
 		manifestFiles = tempFiles
+	}
+
+	// Set install path from manifest
+	if installPath == "" {
+		installPath = strings.TrimSuffix(strings.TrimPrefix(manifest.BuildVersionString, "++Fortnite+Release-"), "-"+platform)
 	}
 
 	// Download and assemble files
