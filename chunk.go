@@ -52,9 +52,14 @@ type ChunkHeader struct {
 	HashType           uint8 // strangely 03
 }
 
+
+
+
 // GetURL builds a url
+
+
 func (c *Chunk) GetURL(cloudURL string) string {
-	return fmt.Sprintf("%s/Builds/Fortnite/CloudDir/ChunksV3/%02d/%s_%s.chunk", cloudURL, c.DataGroup, c.Hash, c.GUID)
+	return fmt.Sprintf("http://epicgames-download1.akamaized.net/Builds/Fortnite/CloudDir/ChunksV3/%02d/%s_%s.chunk", c.DataGroup, c.Hash, c.GUID)
 }
 
 // Download fetches the chunk from the internet
@@ -67,7 +72,7 @@ func (c *Chunk) Download(cloudURL string) (data []byte, err error) {
 	defer resp.Body.Close()
 
 	// Check response code
-	if resp.StatusCode/100 != 2 {
+	if resp.StatusCode != 200 {
 		err = fmt.Errorf("invalid status code %d", resp.StatusCode)
 		return
 	}

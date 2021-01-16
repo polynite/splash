@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"net/url"
 	"os"
 )
 
@@ -28,23 +27,6 @@ func (c *Catalog) GetManifestURL() string {
 	for _, m := range c.Elements[0].Manifests {
 		if len(m.QueryParams) == 0 {
 			return m.URI
-		}
-
-		// Build url
-		u, err := url.Parse(m.URI)
-		if err == nil {
-			// Build query string
-			query := u.Query()
-
-			// Add all params
-			for _, q := range m.QueryParams {
-				query.Set(q.Name, q.Value)
-			}
-
-			// Set query
-			u.RawQuery = query.Encode()
-
-			return u.String()
 		}
 	}
 

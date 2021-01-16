@@ -28,15 +28,15 @@ var cacheLock sync.Mutex
 var (
 	platform           string
 	manifestID         string
-	manifestPath       string
 	installPath        string
+	cachePath          string
 	fileFilter         string
 	downloadURLs       []string
 	skipIntegrityCheck bool
 	workerCount        int
 )
 
-const defaultDownloadURL = "http://epicgames-download1.akamaized.net"
+const defaultDownloadURL = "https://raw.githubusercontent.com/"
 
 func init() {
 	// Seed random
@@ -44,9 +44,9 @@ func init() {
 
 	// Parse flags
 	flag.StringVar(&platform, "platform", "Windows", "platform to download for")
-	//flag.StringVar(&manifestID, "manifest", "", "download a specific manifest")
-	flag.StringVar(&manifestPath, "manifest-file", "", "download a specific manifest")
+	flag.StringVar(&manifestID, "manifest", "", "download a specific manifest")
 	flag.StringVar(&installPath, "install-dir", "files", "folder to write downloaded files to")
+	flag.StringVar(&cachePath, "cache", "", "path to folder for caching manifest and catalog")
 	flag.StringVar(&fileFilter, "files", "", "comma-separated list of files to download")
 	dlUrls := flag.String("url", defaultDownloadURL, "download url")
 	flag.BoolVar(&skipIntegrityCheck, "skipcheck", false, "skip file integrity check")
@@ -56,16 +56,29 @@ func init() {
 	downloadURLs = strings.Split(*dlUrls, ",")
 
 	// Set http timeout
-	httpClient.Timeout = 30 * time.Second
+	httpClient.Timeout = 990 * time.Second
 }
 
 func main() {
+	// Make working directories
+	if cachePath != "" {
+		os.MkdirAll(cachePath, os.ModePerm)
+	}
+
 	var catalog *Catalog
 	var manifest *Manifest
 
 	// Load catalog
-	if manifestID == "" && manifestPath == "" {
-		// Fetch latest catalog
+	catalogCachePath := filepath.Join(cachePath, "catalog.json")
+	if _, err := os.Stat(catalogCachePath); err == nil && cachePath != "" { // read catalog from cache
+		log.Println("Loading catalog from cache...")
+
+		// Read from disk
+		catalog, err = readCatalogFile(catalogCachePath)
+		if err != nil {
+			log.Fatalf("Failed to load catalog: %v", err)
+		}
+	} else { // otherwise, fetch latest
 		log.Println("Fetching latest catalog...")
 
 		// Fetch from MCP
@@ -80,36 +93,47 @@ func main() {
 			log.Fatalf("Failed to parse catalog: %v", err)
 		}
 
-		// Sanity check catalog
-		if len(catalog.Elements) != 1 || len(catalog.Elements[0].Manifests) < 1 {
-			log.Fatal("Unsupported catalog")
+		// Save to cache
+		if cachePath != "" {
+			ioutil.WriteFile(catalogCachePath, catalogBytes, 0644)
 		}
-
-		log.Printf("Catalog %s (%s) %s loaded.\n", catalog.Elements[0].AppName, catalog.Elements[0].LabelName, catalog.Elements[0].BuildVersion)
 	}
 
+	// Sanity check catalog
+	if len(catalog.Elements) != 1 || len(catalog.Elements[0].Manifests) < 1 {
+		log.Fatal("Unsupported catalog")
+	}
+
+	log.Printf("Catalog %s (%s) %s loaded.\n", catalog.Elements[0].AppName, catalog.Elements[0].LabelName, catalog.Elements[0].BuildVersion)
+
 	// Load manifest
+	manifestCachePath := filepath.Join(cachePath, "manifest.json")
 	if manifestID != "" { // fetch specific manifest
 		log.Printf("Fetching manifest %s...", manifestID)
 
 		var err error
-		manifest, _, err = fetchManifest(fmt.Sprintf("%s/Builds/Fortnite/CloudDir/%s.manifest", defaultDownloadURL, manifestID))
+		//manifest, _, err = fetchManifest(fmt.Sprintf("%s/Builds/Fortnite/CloudDir/%s.manifest", defaultDownloadURL, manifestID))
+		manifest, _, err = fetchManifest(fmt.Sprintf("%s/realkyro/Fortnite-ManifestsArchive/master/Manifests/%s.manifest", defaultDownloadURL, manifestID))
 		if err != nil {
 			log.Fatalf("Failed to fetch manifest: %v", err)
 		}
-	} else if _, err := os.Stat(manifestPath); err == nil && manifestPath != "" { // read manifest from disk
-		log.Println("Loading manifest from file...")
+	} else if _, err := os.Stat(manifestCachePath); err == nil && cachePath != "" { // read manifest from disk
+		log.Println("Loading manifest from cache...")
 
-		manifest, err = readManifestFile(manifestPath)
+		manifest, err = readManifestFile(manifestCachePath)
 		if err != nil {
 			log.Fatalf("Failed to read manifest: %v", err)
 		}
-	} else { // otherwise, fetch from catalog
+	} else { // otherwise, fetch from web
 		log.Println("Fetching latest manifest...")
 
-		manifest, _, err = fetchManifest(catalog.GetManifestURL())
+		var manifestBytes []byte
+		manifest, manifestBytes, err = fetchManifest(catalog.GetManifestURL())
 		if err != nil {
 			log.Fatalf("Failed to fetch manifest: %v", err)
+		}
+		if cachePath != "" {
+			ioutil.WriteFile(manifestCachePath, manifestBytes, 0644)
 		}
 	}
 
