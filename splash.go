@@ -51,6 +51,7 @@ func init() {
 	flag.StringVar(&chunkPath, "chunk-dir", "", "folder to read predownloaded chunks from")
 	flag.StringVar(&fileFilter, "files", "", "comma-separated list of files to download")
 	dlUrls := flag.String("url", defaultDownloadURL, "download url")
+	httpTimeout := flag.Int64("http-timeout", 60, "http timeout in seconds")
 	flag.BoolVar(&skipIntegrityCheck, "skipcheck", false, "skip file integrity check")
 	flag.IntVar(&workerCount, "workers", 10, "amount of workers")
 	flag.Parse()
@@ -60,9 +61,7 @@ func init() {
 	}
 
 	downloadURLs = strings.Split(*dlUrls, ",")
-
-	// Set http timeout
-	httpClient.Timeout = 30 * time.Second
+	httpClient.Timeout = time.Duration(*httpTimeout) * time.Second
 }
 
 func main() {
