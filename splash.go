@@ -112,6 +112,37 @@ func main() {
 		manifests = append(manifests, manifest)
 	} else if manifestPath != "" { // read manifest(s) from disk
 		for _, manifestPath := range strings.Split(manifestPath, ",") {
+			// Check if folder
+			if fi, err := os.Stat(manifestPath); err == nil && fi.IsDir() {
+				loaded := 0
+
+				// Walk folder
+				if err := filepath.Walk(manifestPath, func(path string, info os.FileInfo, err error) error {
+					if err != nil {
+						return fmt.Errorf("failed to walk: %v", err)
+					}
+
+					if info.IsDir() || info.Size() == 0 {
+						return nil
+					}
+
+					// Read manifest
+					manifest, err := readManifestFile(path)
+					if err != nil {
+						log.Fatalf("Failed to read manifest from folder: %v", err)
+					}
+					manifests = append(manifests, manifest)
+					loaded++
+
+					return nil
+				}); err != nil {
+					log.Fatalf("Failed to read manifests from folder: %v", err)
+				}
+
+				log.Printf("Loaded %d manifests from %s.\n", loaded, manifestPath)
+				continue
+			}
+
 			manifest, err := readManifestFile(manifestPath)
 			if err != nil {
 				log.Fatalf("Failed to read manifest %s: %v", manifestPath, err)
@@ -160,8 +191,6 @@ func main() {
 		}
 	}
 
-	log.Printf("Downloading %d files in %d chunks from %d manifests.\n", len(manifestFiles), len(manifestChunks), len(manifests))
-
 	// Hacky hacks for chunk-only download
 	if onlyDLChunks {
 		manifestFiles = make(map[string]ManifestFile)
@@ -169,6 +198,8 @@ func main() {
 			manifestFiles[k] = ManifestFile{FileName: filepath.Join(installPath, chunk.GUID), FileHash: chunk.Sha, FileChunkParts: []ManifestFileChunkPart{{GUID: chunk.GUID, Offset: "000000000000", Size: chunk.OriginalSize}}}
 		}
 	}
+
+	log.Printf("Downloading %d files in %d chunks from %d manifests.\n", len(manifestFiles), len(manifestChunks), len(manifests))
 
 	// Download and assemble files
 	for k, file := range manifestFiles {
