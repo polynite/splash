@@ -166,7 +166,7 @@ func main() {
 	if onlyDLChunks {
 		manifestFiles = make(map[string]ManifestFile)
 		for k, chunk := range manifestChunks {
-			manifestFiles[k] = ManifestFile{FileName: filepath.Join(installPath, chunk.GUID), FileHash: chunk.Hash, FileChunkParts: []ManifestFileChunkPart{{GUID: chunk.GUID, Offset: "000000000000", Size: chunk.OriginalSize}}}
+			manifestFiles[k] = ManifestFile{FileName: filepath.Join(installPath, chunk.GUID), FileHash: chunk.Sha, FileChunkParts: []ManifestFileChunkPart{{GUID: chunk.GUID, Offset: "000000000000", Size: chunk.OriginalSize}}}
 		}
 	}
 
@@ -180,23 +180,18 @@ func main() {
 				// Open file
 				diskFile, err := os.Open(filePath)
 				if err == nil {
-					// Calculate checksum
-					hasher := sha1.New()
-					_, err := io.Copy(hasher, diskFile)
+					// Compare checksum
+					equal, err := checkFile(diskFile, file)
 					diskFile.Close()
-
-					if err == nil {
-						// Compare checksum
-						if bytes.Equal(hasher.Sum(nil), readPackedData(file.FileHash)) {
-							// Remove any trailing chunks
-							for _, chunkPart := range file.FileChunkParts {
-								chunkUsed(chunkPart.GUID)
-							}
-
-							log.Printf("File %s found on disk!\n", file.FileName)
-							checkedFiles[k] = file
-							return
+					if err == nil && equal {
+						// Remove any trailing chunks
+						for _, chunkPart := range file.FileChunkParts {
+							chunkUsed(chunkPart.GUID)
 						}
+
+						log.Printf("File %s found on disk!\n", file.FileName)
+						checkedFiles[k] = file
+						return
 					}
 				}
 			}
@@ -295,8 +290,7 @@ func main() {
 			}
 
 			// Hash file
-			hasher := sha1.New()
-			_, err = io.Copy(hasher, f)
+			equal, err := checkFile(f, file)
 			f.Close()
 
 			if err != nil {
@@ -304,16 +298,50 @@ func main() {
 				continue
 			}
 
-			// Compare checksum
-			expectedHash := readPackedData(file.FileHash)
-			actualHash := hasher.Sum(nil)
-			if !bytes.Equal(actualHash, expectedHash) {
-				log.Printf("File %s is corrupt - got hash %s but want %s\n", file.FileName, hex.EncodeToString(actualHash), hex.EncodeToString(expectedHash))
+			if !equal {
+				log.Printf("File %s is corrupt\n", file.FileName)
 			}
 		}
 	}
 
 	log.Println("Done!")
+}
+
+func checkFile(f *os.File, file ManifestFile) (bool, error) {
+	// Parse expected hash
+	var hash []byte
+	if len(file.FileHash) == 40 {
+		hash, _ = hex.DecodeString(file.FileHash)
+	} else {
+		hash = readPackedData(file.FileHash)
+	}
+
+	// Calculate file size
+	var totalSize uint32 = 0
+	for _, chunk := range file.FileChunkParts {
+		totalSize += readPackedUint32(chunk.Size)
+	}
+
+	// Compare actual size
+	fi, err := f.Stat()
+	if err != nil {
+		return false, fmt.Errorf("failed to stat: %v", err)
+	}
+	if totalSize != uint32(fi.Size()) {
+		return false, nil
+	}
+
+	// Ignore checksum for chunks
+	if onlyDLChunks {
+		return true, nil
+	}
+
+	// Calculate checksum
+	hasher := sha1.New()
+	_, err = io.Copy(hasher, f)
+
+	// Compare checksum
+	return bytes.Equal(hasher.Sum(nil), hash), err
 }
 
 func chunkUsed(guid string) {
