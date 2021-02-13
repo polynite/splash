@@ -376,7 +376,14 @@ func chunkWorker(jobs chan ChunkJob, results chan<- ChunkJobResult) {
 			}
 
 			// Parse chunk
-			chunkReader, _, err = parseChunk(rawChunkReader)
+			var decompressedData []byte
+			chunkReader, decompressedData, err = parseChunk(rawChunkReader)
+
+			// Close original file reader if we got decompressed data
+			if len(decompressedData) > 0 {
+				rawChunkReader.Close()
+			}
+
 			if err != nil {
 				log.Printf("Failed to parse chunk %s from disk: %v\n", j.Chunk.GUID, err)
 				jobs <- j
@@ -400,6 +407,7 @@ func chunkWorker(jobs chan ChunkJob, results chan<- ChunkJobResult) {
 				continue
 			}
 
+			// Parse chunk
 			var chunkData []byte
 			chunkReader, chunkData, err = parseChunk(chunkReader)
 			if err != nil {
