@@ -38,6 +38,7 @@ var (
 	downloadURLs       []string
 	skipIntegrityCheck bool
 	workerCount        int
+	killSignal         bool = false
 )
 
 const defaultDownloadURL = "http://epicgames-download1.akamaized.net"
@@ -193,29 +194,73 @@ func main() {
 		}
 	}
 
-	// Hacky hacks for chunk-only download
-	if onlyDLChunks {
-		manifestFiles = make(map[string]ManifestFile)
-		for k, chunk := range manifestChunks {
-			manifestFiles[k] = ManifestFile{FileName: filepath.Join(installPath, chunk.GUID), FileHash: chunk.Sha, FileChunkParts: []ManifestFileChunkPart{{GUID: chunk.GUID, Offset: "000000000000", Size: chunk.OriginalSize}}}
-		}
-	}
-
-	log.Printf("Downloading %d files in %d chunks from %d manifests.\n", len(manifestFiles), len(manifestChunks), len(manifests))
-
 	// Setup interrupt handler
-	killSig := false
 	c := make(chan os.Signal)
 	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
 	go func() {
 		<-c
 		log.Println("Shutting down...")
-		killSig = true
+		killSignal = true
 	}()
+
+	// Handle chunk-only download
+	if onlyDLChunks {
+		log.Printf("Downloading %d chunks...\n", len(manifestChunks))
+
+		// Build job queue
+		jobs := make(chan Chunk, len(manifestChunks))
+		for _, chunk := range manifestChunks {
+			jobs <- chunk
+		}
+		close(jobs)
+
+		// Workers
+		var wg sync.WaitGroup
+		for i := 0; i < workerCount; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for j := range jobs {
+					if killSignal {
+						return
+					}
+
+					filePath := filepath.Join(chunkPath, j.GUID)
+
+					// Check if present on disk
+					if fi, err := os.Stat(filePath); err == nil && fi.Size() == j.FileSize {
+						continue
+					}
+
+					// Download chunk
+					chunkData, err := j.Download(downloadURLs[rand.Intn(len(downloadURLs))])
+					if err != nil {
+						log.Printf("Failed to download chunk %s: %v\n", j.GUID, err)
+						jobs <- j // requeue
+						continue
+					}
+
+					// Write to disk
+					if err := ioutil.WriteFile(filePath, chunkData, 0644); err != nil {
+						log.Printf("Failed to write chunk %s: %v\n", j.GUID, err)
+						jobs <- j
+					}
+				}
+			}()
+		}
+
+		// Wait for all goroutines
+		wg.Wait()
+
+		log.Println("Done!")
+		os.Exit(0)
+	}
+
+	log.Printf("Downloading %d files in %d chunks from %d manifests.\n", len(manifestFiles), len(manifestChunks), len(manifests))
 
 	// Download and assemble files
 	for k, file := range manifestFiles {
-		if killSig {
+		if killSignal {
 			return
 		}
 
@@ -223,23 +268,19 @@ func main() {
 			filePath := file.FileName
 
 			// Check if file already exists
-			if _, err := os.Stat(filePath); err == nil {
-				// Open file
-				diskFile, err := os.Open(filePath)
-				if err == nil {
-					// Compare checksum
-					equal, err := checkFile(diskFile, file)
-					diskFile.Close()
-					if err == nil && equal {
-						// Remove any trailing chunks
-						for _, chunkPart := range file.FileChunkParts {
-							chunkUsed(chunkPart.GUID)
-						}
-
-						log.Printf("File %s found on disk!\n", file.FileName)
-						checkedFiles[k] = file
-						return
+			if f, err := os.Open(filePath); err == nil {
+				// Compare checksum
+				equal, err := checkFile(f, file)
+				f.Close()
+				if err == nil && equal {
+					// Remove any trailing chunks
+					for _, chunkPart := range file.FileChunkParts {
+						chunkUsed(chunkPart.GUID)
 					}
+
+					log.Printf("File %s found on disk!\n", file.FileName)
+					checkedFiles[k] = file
+					return
 				}
 			}
 
@@ -260,15 +301,6 @@ func main() {
 			jobs := make(chan ChunkJob, chunkPartCount)
 			for i, chunkPart := range file.FileChunkParts {
 				chunkJobs[i] = ChunkJob{ID: i, Chunk: manifestChunks[chunkPart.GUID], Part: ChunkPart{Offset: readPackedUint32(chunkPart.Offset), Size: readPackedUint32(chunkPart.Size)}}
-
-				// Check if present on disk
-				if chunkPath != "" {
-					localPath := filepath.Join(chunkPath, chunkPart.GUID)
-					if _, err := os.Stat(localPath); err == nil {
-						chunkJobs[i].LocalPath = localPath
-					}
-				}
-
 				jobs <- chunkJobs[i]
 			}
 
@@ -378,11 +410,6 @@ func checkFile(f *os.File, file ManifestFile) (bool, error) {
 		return false, nil
 	}
 
-	// Ignore checksum for chunks
-	if onlyDLChunks {
-		return true, nil
-	}
-
 	// Calculate checksum
 	hasher := sha1.New()
 	_, err = io.Copy(hasher, f)
@@ -441,9 +468,7 @@ func chunkWorker(jobs chan ChunkJob, results chan<- ChunkJobResult) {
 		if ok {
 			// Read from cache
 			chunkReader = NewByteCloser(chunkCache[j.Chunk.GUID])
-		} else if j.LocalPath != "" {
-			// Read chunk file
-			rawChunkReader, err := os.Open(j.LocalPath)
+		} else if rawChunkReader, err := os.Open(filepath.Join(chunkPath, j.Chunk.GUID)); err == nil {
 			if err != nil {
 				log.Printf("Failed to open chunk %s from disk: %v\n", j.Chunk.GUID, err)
 				jobs <- j
@@ -455,7 +480,7 @@ func chunkWorker(jobs chan ChunkJob, results chan<- ChunkJobResult) {
 			chunkReader, decompressedData, err = parseChunk(rawChunkReader)
 
 			// Close original file reader if we got decompressed data
-			if len(decompressedData) > 0 {
+			if len(decompressedData) > 0 || err != nil {
 				rawChunkReader.Close()
 			}
 
@@ -475,12 +500,6 @@ func chunkWorker(jobs chan ChunkJob, results chan<- ChunkJobResult) {
 
 			// Create new reader
 			chunkReader = NewByteCloser(rawChunkData)
-
-			// Return raw chunk if not downloading full files, also skip any caching
-			if onlyDLChunks {
-				results <- ChunkJobResult{Job: j, Reader: chunkReader}
-				continue
-			}
 
 			// Parse chunk
 			var chunkData []byte

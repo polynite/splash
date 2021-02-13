@@ -12,12 +12,11 @@ import (
 
 // Chunk defines a downloadable chunk
 type Chunk struct {
-	GUID         string
-	Hash         string
-	Sha          string
-	DataGroup    int
-	FileSize     int64
-	OriginalSize string
+	GUID      string
+	Hash      string
+	Sha       string
+	DataGroup int
+	FileSize  int64
 }
 
 // ChunkPart defines a part of a specific chunk
@@ -28,10 +27,9 @@ type ChunkPart struct {
 
 // ChunkJob defines a job
 type ChunkJob struct {
-	ID        int
-	Chunk     Chunk
-	Part      ChunkPart
-	LocalPath string
+	ID    int
+	Chunk Chunk
+	Part  ChunkPart
 }
 
 // ChunkJobResult defines a result
@@ -90,12 +88,11 @@ func NewChunk(guid string, hash string, sha string, dataGroup string, fileSize s
 	reverse(parsedHash)
 
 	return Chunk{
-		GUID:         guid,
-		Hash:         strings.ToUpper(hex.EncodeToString(parsedHash)),
-		Sha:          sha,
-		DataGroup:    dg,
-		FileSize:     int64(readPackedUint32(fileSize)),
-		OriginalSize: fileSize,
+		GUID:      guid,
+		Hash:      strings.ToUpper(hex.EncodeToString(parsedHash)),
+		Sha:       sha,
+		DataGroup: dg,
+		FileSize:  int64(readPackedUint32(fileSize)),
 	}
 }
 
