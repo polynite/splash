@@ -63,7 +63,9 @@ func init() {
 	}
 
 	for _, file := range strings.Split(*dlFilter, ",") {
-		fileFilter[file] = true
+		if file != "" {
+			fileFilter[file] = true
+		}
 	}
 
 	downloadURLs = strings.Split(*dlUrls, ",")
@@ -324,30 +326,65 @@ func chunkUsed(guid string) {
 	}
 }
 
+func parseChunk(reader ReadSeekCloser) (ReadSeekCloser, []byte, error) {
+	// Read chunk header
+	chunkHeader, err := readChunkHeader(reader)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to read header: %v", err)
+	}
+
+	// Decompress if needed
+	if chunkHeader.StoredAs == 0 {
+		return reader, nil, nil
+	} else if chunkHeader.StoredAs == 1 {
+		// Create decompressor
+		zlibReader, err := zlib.NewReader(reader)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to create decompressor: %v", err)
+		}
+
+		// Decompress entire chunk
+		chunkData, err := ioutil.ReadAll(zlibReader)
+		zlibReader.Close()
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to decompress: %v", err)
+		}
+
+		// Set reader to decompressed data
+		return NewByteCloser(chunkData), chunkData, nil
+	}
+
+	return nil, nil, fmt.Errorf("got unknown chunk: %d", chunkHeader.StoredAs)
+}
+
 func chunkWorker(jobs chan ChunkJob, results chan<- ChunkJobResult) {
 	for j := range jobs {
 		var chunkReader ReadSeekCloser
 		cacheLock.Lock()
-		if _, ok := chunkCache[j.Chunk.GUID]; ok {
+		_, ok := chunkCache[j.Chunk.GUID]
+		cacheLock.Unlock()
+		if ok {
 			// Read from cache
 			chunkReader = NewByteCloser(chunkCache[j.Chunk.GUID])
-
-			cacheLock.Unlock()
 		} else if j.LocalPath != "" {
-			cacheLock.Unlock()
-
-			var err error
-			chunkReader, err = os.Open(j.LocalPath)
+			// Read chunk file
+			rawChunkReader, err := os.Open(j.LocalPath)
 			if err != nil {
 				log.Printf("Failed to open chunk %s from disk: %v\n", j.Chunk.GUID, err)
 				jobs <- j
 				continue
 			}
-		} else {
-			cacheLock.Unlock()
 
+			// Parse chunk
+			chunkReader, _, err = parseChunk(rawChunkReader)
+			if err != nil {
+				log.Printf("Failed to parse chunk %s from disk: %v\n", j.Chunk.GUID, err)
+				jobs <- j
+				continue
+			}
+		} else {
 			// Download chunk
-			chunkData, err := j.Chunk.Download(downloadURLs[rand.Intn(len(downloadURLs))])
+			rawChunkData, err := j.Chunk.Download(downloadURLs[rand.Intn(len(downloadURLs))])
 			if err != nil {
 				log.Printf("Failed to download chunk %s: %v\n", j.Chunk.GUID, err)
 				jobs <- j // requeue
@@ -355,7 +392,7 @@ func chunkWorker(jobs chan ChunkJob, results chan<- ChunkJobResult) {
 			}
 
 			// Create new reader
-			chunkReader = NewByteCloser(chunkData)
+			chunkReader = NewByteCloser(rawChunkData)
 
 			// Return raw chunk if not downloading full files, also skip any caching
 			if onlyDLChunks {
@@ -363,39 +400,10 @@ func chunkWorker(jobs chan ChunkJob, results chan<- ChunkJobResult) {
 				continue
 			}
 
-			// Read chunk header
-			chunkHeader, err := readChunkHeader(chunkReader)
+			var chunkData []byte
+			chunkReader, chunkData, err = parseChunk(chunkReader)
 			if err != nil {
-				log.Printf("Failed to read chunk header %s: %v\n", j.Chunk.GUID, err)
-				jobs <- j
-				continue
-			}
-
-			// Decompress if needed
-			if chunkHeader.StoredAs == 1 {
-				// Create decompressor
-				zlibReader, err := zlib.NewReader(chunkReader)
-				if err != nil {
-					log.Printf("Failed to create decompressor for chunk %s: %v\n", j.Chunk.GUID, err)
-					jobs <- j
-					continue
-				}
-
-				// Decompress entire chunk
-				chunkData, err = ioutil.ReadAll(zlibReader)
-				if err != nil {
-					zlibReader.Close()
-
-					log.Printf("Failed to decompress chunk %s: %v\n", j.Chunk.GUID, err)
-					jobs <- j
-					continue
-				}
-				zlibReader.Close()
-
-				// Set reader to decompressed data
-				chunkReader = NewByteCloser(chunkData)
-			} else if chunkHeader.StoredAs != 0 {
-				log.Printf("Got unknown chunk (storedas: %d) %s\n", chunkHeader.StoredAs, j.Chunk.GUID)
+				log.Printf("Failed to parse chunk %s: %v\n", j.Chunk.GUID, err)
 				jobs <- j
 				continue
 			}
@@ -403,10 +411,10 @@ func chunkWorker(jobs chan ChunkJob, results chan<- ChunkJobResult) {
 			// Store in cache if needed later
 			cacheLock.Lock()
 			if chunkParentCount[j.Chunk.GUID] > 1 {
-				if chunkHeader.StoredAs == 0 { // chunkData still contains header here
-					chunkCache[j.Chunk.GUID] = chunkData[62:]
-				} else {
+				if len(chunkData) > 0 {
 					chunkCache[j.Chunk.GUID] = chunkData
+				} else {
+					chunkCache[j.Chunk.GUID] = rawChunkData[62:] // chunkData still contains header here
 				}
 			}
 			cacheLock.Unlock()
