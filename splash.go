@@ -30,6 +30,7 @@ var (
 	manifestID         string
 	manifestPath       string
 	installPath        string
+	chunkPath          string
 	fileFilter         string
 	downloadURLs       []string
 	skipIntegrityCheck bool
@@ -47,6 +48,7 @@ func init() {
 	//flag.StringVar(&manifestID, "manifest", "", "download a specific manifest")
 	flag.StringVar(&manifestPath, "manifest-file", "", "download a specific manifest")
 	flag.StringVar(&installPath, "install-dir", "", "folder to write downloaded files to")
+	flag.StringVar(&chunkPath, "chunk-dir", "", "folder to read predownloaded chunks from")
 	flag.StringVar(&fileFilter, "files", "", "comma-separated list of files to download")
 	dlUrls := flag.String("url", defaultDownloadURL, "download url")
 	flag.BoolVar(&skipIntegrityCheck, "skipcheck", false, "skip file integrity check")
@@ -204,6 +206,15 @@ func main() {
 			jobs := make(chan ChunkJob, chunkPartCount)
 			for i, chunkPart := range file.FileChunkParts {
 				chunkJobs[i] = ChunkJob{ID: i, Chunk: manifestChunks[chunkPart.GUID], Part: ChunkPart{Offset: readPackedUint32(chunkPart.Offset), Size: readPackedUint32(chunkPart.Size)}}
+
+				// Check if present on disk
+				if chunkPath != "" {
+					localPath := filepath.Join(chunkPath, chunkPart.GUID)
+					if _, err := os.Stat(localPath); err == nil {
+						chunkJobs[i].LocalPath = localPath
+					}
+				}
+
 				jobs <- chunkJobs[i]
 			}
 
@@ -240,6 +251,10 @@ func main() {
 				// Write chunk part to file
 				result.Reader.Seek(int64(result.Job.Part.Offset), io.SeekCurrent)
 				_, err := io.CopyN(outFile, result.Reader, int64(result.Job.Part.Size))
+
+				// Close reader
+				result.Reader.Close()
+
 				if err != nil {
 					log.Printf("Failed to write chunk %s to file %s: %v\n", result.Job.Chunk.GUID, file.FileName, err)
 					continue
@@ -303,13 +318,23 @@ func chunkUsed(guid string) {
 
 func chunkWorker(jobs chan ChunkJob, results chan<- ChunkJobResult) {
 	for j := range jobs {
-		var chunkReader io.ReadSeeker
+		var chunkReader ReadSeekCloser
 		cacheLock.Lock()
 		if _, ok := chunkCache[j.Chunk.GUID]; ok {
 			// Read from cache
-			chunkReader = bytes.NewReader(chunkCache[j.Chunk.GUID])
+			chunkReader = NewByteCloser(chunkCache[j.Chunk.GUID])
 
 			cacheLock.Unlock()
+		} else if j.LocalPath != "" {
+			cacheLock.Unlock()
+
+			var err error
+			chunkReader, err = os.Open(j.LocalPath)
+			if err != nil {
+				log.Printf("Failed to open chunk %s from disk: %v\n", j.Chunk.GUID, err)
+				jobs <- j
+				continue
+			}
 		} else {
 			cacheLock.Unlock()
 
@@ -322,7 +347,7 @@ func chunkWorker(jobs chan ChunkJob, results chan<- ChunkJobResult) {
 			}
 
 			// Create new reader
-			chunkReader = bytes.NewReader(chunkData)
+			chunkReader = NewByteCloser(chunkData)
 
 			// Read chunk header
 			chunkHeader, err := readChunkHeader(chunkReader)
@@ -345,13 +370,16 @@ func chunkWorker(jobs chan ChunkJob, results chan<- ChunkJobResult) {
 				// Decompress entire chunk
 				chunkData, err = ioutil.ReadAll(zlibReader)
 				if err != nil {
+					zlibReader.Close()
+
 					log.Printf("Failed to decompress chunk %s: %v\n", j.Chunk.GUID, err)
 					jobs <- j
 					continue
 				}
+				zlibReader.Close()
 
 				// Set reader to decompressed data
-				chunkReader = bytes.NewReader(chunkData)
+				chunkReader = NewByteCloser(chunkData)
 			} else if chunkHeader.StoredAs != 0 {
 				log.Printf("Got unknown chunk (storedas: %d) %s\n", chunkHeader.StoredAs, j.Chunk.GUID)
 				jobs <- j

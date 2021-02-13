@@ -4,7 +4,6 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
-	"io"
 	"io/ioutil"
 	"log"
 	"strconv"
@@ -28,15 +27,16 @@ type ChunkPart struct {
 
 // ChunkJob defines a job
 type ChunkJob struct {
-	ID    int
-	Chunk Chunk
-	Part  ChunkPart
+	ID        int
+	Chunk     Chunk
+	Part      ChunkPart
+	LocalPath string
 }
 
 // ChunkJobResult defines a result
 type ChunkJobResult struct {
 	Job    ChunkJob
-	Reader io.ReadSeeker
+	Reader ReadSeekCloser
 }
 
 // ChunkHeader defines the binary chunk header
@@ -97,7 +97,7 @@ func NewChunk(guid string, hash string, sha string, dataGroup string, fileSize s
 	}
 }
 
-func readChunkHeader(r io.ReadSeeker) (ChunkHeader, error) {
+func readChunkHeader(r ReadSeekCloser) (ChunkHeader, error) {
 	// Initialize empty header
 	header := ChunkHeader{}
 
