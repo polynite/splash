@@ -13,9 +13,11 @@ import (
 	"math/rand"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -201,8 +203,22 @@ func main() {
 
 	log.Printf("Downloading %d files in %d chunks from %d manifests.\n", len(manifestFiles), len(manifestChunks), len(manifests))
 
+	// Setup interrupt handler
+	killSig := false
+	c := make(chan os.Signal)
+	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-c
+		log.Println("Shutting down...")
+		killSig = true
+	}()
+
 	// Download and assemble files
 	for k, file := range manifestFiles {
+		if killSig {
+			return
+		}
+
 		func() {
 			filePath := file.FileName
 
