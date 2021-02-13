@@ -32,7 +32,7 @@ var (
 	installPath        string
 	chunkPath          string
 	onlyDLChunks       bool
-	fileFilter         string
+	fileFilter         map[string]bool = make(map[string]bool)
 	downloadURLs       []string
 	skipIntegrityCheck bool
 	workerCount        int
@@ -47,11 +47,11 @@ func init() {
 	// Parse flags
 	flag.StringVar(&platform, "platform", "Windows", "platform to download for")
 	//flag.StringVar(&manifestID, "manifest", "", "download a specific manifest")
-	flag.StringVar(&manifestPath, "manifest-file", "", "download a specific manifest")
+	flag.StringVar(&manifestPath, "manifest-file", "", "download specific manifest(s) - comma-separated list")
 	flag.StringVar(&installPath, "install-dir", "", "folder to write downloaded files to")
 	flag.StringVar(&chunkPath, "chunk-dir", "", "folder to read predownloaded chunks from")
 	flag.BoolVar(&onlyDLChunks, "chunks-only", false, "only download chunks")
-	flag.StringVar(&fileFilter, "files", "", "comma-separated list of files to download")
+	dlFilter := flag.String("files", "", "comma-separated list of files to download")
 	dlUrls := flag.String("url", defaultDownloadURL, "download url")
 	httpTimeout := flag.Int64("http-timeout", 60, "http timeout in seconds")
 	flag.BoolVar(&skipIntegrityCheck, "skipcheck", false, "skip file integrity check")
@@ -62,13 +62,17 @@ func init() {
 		manifestPath = flag.Arg(0)
 	}
 
+	for _, file := range strings.Split(*dlFilter, ",") {
+		fileFilter[file] = true
+	}
+
 	downloadURLs = strings.Split(*dlUrls, ",")
 	httpClient.Timeout = time.Duration(*httpTimeout) * time.Second
 }
 
 func main() {
 	var catalog *Catalog
-	var manifest *Manifest
+	manifests := make([]*Manifest, 0)
 
 	// Load catalog
 	if manifestID == "" && manifestPath == "" {
@@ -99,78 +103,75 @@ func main() {
 	if manifestID != "" { // fetch specific manifest
 		log.Printf("Fetching manifest %s...", manifestID)
 
-		var err error
-		manifest, _, err = fetchManifest(fmt.Sprintf("%s/Builds/Fortnite/CloudDir/%s.manifest", defaultDownloadURL, manifestID))
+		manifest, _, err := fetchManifest(fmt.Sprintf("%s/Builds/Fortnite/CloudDir/%s.manifest", defaultDownloadURL, manifestID))
 		if err != nil {
 			log.Fatalf("Failed to fetch manifest: %v", err)
 		}
-	} else if _, err := os.Stat(manifestPath); err == nil && manifestPath != "" { // read manifest from disk
-		log.Println("Loading manifest from file...")
+		manifests = append(manifests, manifest)
+	} else if manifestPath != "" { // read manifest(s) from disk
+		for _, manifestPath := range strings.Split(manifestPath, ",") {
+			manifest, err := readManifestFile(manifestPath)
+			if err != nil {
+				log.Fatalf("Failed to read manifest %s: %v", manifestPath, err)
+			}
 
-		manifest, err = readManifestFile(manifestPath)
-		if err != nil {
-			log.Fatalf("Failed to read manifest: %v", err)
+			log.Printf("Manifest %s %s loaded.\n", manifest.AppNameString, manifest.BuildVersionString)
+
+			manifests = append(manifests, manifest)
 		}
 	} else { // otherwise, fetch from catalog
 		log.Println("Fetching latest manifest...")
 
-		manifest, _, err = fetchManifest(catalog.GetManifestURL())
+		manifest, _, err := fetchManifest(catalog.GetManifestURL())
 		if err != nil {
 			log.Fatalf("Failed to fetch manifest: %v", err)
 		}
+		manifests = append(manifests, manifest)
 	}
-
-	log.Printf("Manifest %s %s loaded.\n", manifest.AppNameString, manifest.BuildVersionString)
 
 	manifestFiles := make(map[string]ManifestFile)
 	manifestChunks := make(map[string]Chunk)
 	checkedFiles := make(map[string]ManifestFile)
 
-	// Parse manifest
-	for _, file := range manifest.FileManifestList {
-		// Add file
-		manifestFiles[file.FileName] = file
+	// Parse manifests
+	for _, manifest := range manifests {
+		for _, file := range manifest.FileManifestList {
+			// Check filter
+			if _, ok := fileFilter[file.FileName]; !ok && len(fileFilter) > 0 {
+				continue
+			}
 
-		// Add all chunks
-		for _, c := range file.FileChunkParts {
-			chunkParentCount[c.GUID]++
+			// Set full file path
+			file.FileName = filepath.Join(installPath, strings.TrimSuffix(strings.TrimPrefix(manifest.BuildVersionString, "++Fortnite+Release-"), "-"+platform), file.FileName)
 
-			if _, ok := manifestChunks[c.GUID]; !ok { // don't add duplicates
-				manifestChunks[c.GUID] = NewChunk(c.GUID, manifest.ChunkHashList[c.GUID], manifest.ChunkShaList[c.GUID], manifest.DataGroupList[c.GUID], manifest.ChunkFilesizeList[c.GUID])
+			// Add file
+			manifestFiles[file.FileName] = file
+
+			// Add all chunks
+			for _, c := range file.FileChunkParts {
+				chunkParentCount[c.GUID]++
+
+				if _, ok := manifestChunks[c.GUID]; !ok { // don't add duplicates
+					manifestChunks[c.GUID] = NewChunk(c.GUID, manifest.ChunkHashList[c.GUID], manifest.ChunkShaList[c.GUID], manifest.DataGroupList[c.GUID], manifest.ChunkFilesizeList[c.GUID])
+				}
 			}
 		}
 	}
 
-	log.Printf("Found %d files and %d chunks in manifest.\n", len(manifestFiles), len(manifestChunks))
-
-	// File filter
-	if fileFilter != "" {
-		tempFiles := make(map[string]ManifestFile)
-		for _, fileName := range strings.Split(fileFilter, ",") {
-			if f, ok := manifestFiles[fileName]; ok {
-				tempFiles[fileName] = f
-			}
-		}
-		manifestFiles = tempFiles
-	}
-
-	// Set install path from manifest
-	if installPath == "" {
-		installPath = strings.TrimSuffix(strings.TrimPrefix(manifest.BuildVersionString, "++Fortnite+Release-"), "-"+platform)
-	}
+	log.Printf("Downloading %d files in %d chunks from %d manifests.\n", len(manifestFiles), len(manifestChunks), len(manifests))
 
 	// Hacky hacks for chunk-only download
 	if onlyDLChunks {
 		manifestFiles = make(map[string]ManifestFile)
 		for k, chunk := range manifestChunks {
-			manifestFiles[k] = ManifestFile{FileName: chunk.GUID, FileHash: chunk.Hash, FileChunkParts: []ManifestFileChunkPart{{GUID: chunk.GUID, Offset: "000000000000", Size: chunk.OriginalSize}}}
+			manifestFiles[k] = ManifestFile{FileName: filepath.Join(installPath, chunk.GUID), FileHash: chunk.Hash, FileChunkParts: []ManifestFileChunkPart{{GUID: chunk.GUID, Offset: "000000000000", Size: chunk.OriginalSize}}}
 		}
 	}
 
 	// Download and assemble files
 	for k, file := range manifestFiles {
 		func() {
-			filePath := filepath.Join(installPath, file.FileName)
+			filePath := file.FileName
 
 			// Check if file already exists
 			if _, err := os.Stat(filePath); err == nil {
@@ -284,10 +285,8 @@ func main() {
 				continue
 			}
 
-			filePath := filepath.Join(installPath, file.FileName)
-
 			// Open file
-			f, err := os.Open(filePath)
+			f, err := os.Open(file.FileName)
 			if err != nil {
 				log.Printf("Failed to open %s: %v\n", file.FileName, err)
 				continue
@@ -357,6 +356,12 @@ func chunkWorker(jobs chan ChunkJob, results chan<- ChunkJobResult) {
 
 			// Create new reader
 			chunkReader = NewByteCloser(chunkData)
+
+			// Return raw chunk if not downloading full files, also skip any caching
+			if onlyDLChunks {
+				results <- ChunkJobResult{Job: j, Reader: chunkReader}
+				continue
+			}
 
 			// Read chunk header
 			chunkHeader, err := readChunkHeader(chunkReader)
