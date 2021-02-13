@@ -7,16 +7,19 @@ import (
 	"os"
 )
 
+// ManifestFileChunkPart defines a chunk part within a ManifestFileChunk
+type ManifestFileChunkPart struct {
+	GUID   string `json:"Guid"`
+	Offset string `json:"Offset"`
+	Size   string `json:"Size"`
+}
+
 // ManifestFile defines a file within a FileManifestList
 type ManifestFile struct {
-	FileName       string `json:"Filename"`
-	FileHash       string `json:"FileHash"`
-	FileChunkParts []struct {
-		GUID   string `json:"Guid"`
-		Offset string `json:"Offset"`
-		Size   string `json:"Size"`
-	} `json:"FileChunkParts"`
-	InstallTags []string `json:"InstallTags"`
+	FileName       string                  `json:"Filename"`
+	FileHash       string                  `json:"FileHash"`
+	FileChunkParts []ManifestFileChunkPart `json:"FileChunkParts"`
+	InstallTags    []string                `json:"InstallTags"`
 }
 
 // Manifest defines a manifest

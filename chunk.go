@@ -12,11 +12,12 @@ import (
 
 // Chunk defines a downloadable chunk
 type Chunk struct {
-	GUID      string
-	Hash      string
-	Sha       string
-	DataGroup int
-	FileSize  int64
+	GUID         string
+	Hash         string
+	Sha          string
+	DataGroup    int
+	FileSize     int64
+	OriginalSize string
 }
 
 // ChunkPart defines a part of a specific chunk
@@ -89,11 +90,12 @@ func NewChunk(guid string, hash string, sha string, dataGroup string, fileSize s
 	reverse(parsedHash)
 
 	return Chunk{
-		GUID:      guid,
-		Hash:      strings.ToUpper(hex.EncodeToString(parsedHash)),
-		Sha:       sha,
-		DataGroup: dg,
-		FileSize:  int64(readPackedUint32(fileSize)),
+		GUID:         guid,
+		Hash:         strings.ToUpper(hex.EncodeToString(parsedHash)),
+		Sha:          sha,
+		DataGroup:    dg,
+		FileSize:     int64(readPackedUint32(fileSize)),
+		OriginalSize: fileSize,
 	}
 }
 

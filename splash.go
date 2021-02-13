@@ -31,6 +31,7 @@ var (
 	manifestPath       string
 	installPath        string
 	chunkPath          string
+	onlyDLChunks       bool
 	fileFilter         string
 	downloadURLs       []string
 	skipIntegrityCheck bool
@@ -49,6 +50,7 @@ func init() {
 	flag.StringVar(&manifestPath, "manifest-file", "", "download a specific manifest")
 	flag.StringVar(&installPath, "install-dir", "", "folder to write downloaded files to")
 	flag.StringVar(&chunkPath, "chunk-dir", "", "folder to read predownloaded chunks from")
+	flag.BoolVar(&onlyDLChunks, "chunks-only", false, "only download chunks")
 	flag.StringVar(&fileFilter, "files", "", "comma-separated list of files to download")
 	dlUrls := flag.String("url", defaultDownloadURL, "download url")
 	httpTimeout := flag.Int64("http-timeout", 60, "http timeout in seconds")
@@ -155,6 +157,14 @@ func main() {
 	// Set install path from manifest
 	if installPath == "" {
 		installPath = strings.TrimSuffix(strings.TrimPrefix(manifest.BuildVersionString, "++Fortnite+Release-"), "-"+platform)
+	}
+
+	// Hacky hacks for chunk-only download
+	if onlyDLChunks {
+		manifestFiles = make(map[string]ManifestFile)
+		for k, chunk := range manifestChunks {
+			manifestFiles[k] = ManifestFile{FileName: chunk.GUID, FileHash: chunk.Hash, FileChunkParts: []ManifestFileChunkPart{{GUID: chunk.GUID, Offset: "000000000000", Size: chunk.OriginalSize}}}
+		}
 	}
 
 	// Download and assemble files
