@@ -49,7 +49,7 @@ func init() {
 
 	// Parse flags
 	flag.StringVar(&platform, "platform", "Windows", "platform to download for")
-	//flag.StringVar(&manifestID, "manifest", "", "download a specific manifest")
+	flag.StringVar(&manifestID, "manifest", "", "download specific manifest(s)")
 	flag.StringVar(&manifestPath, "manifest-file", "", "download specific manifest(s) - comma-separated list")
 	flag.StringVar(&installPath, "install-dir", "", "folder to write downloaded files to")
 	flag.StringVar(&chunkPath, "chunk-dir", "", "folder to read predownloaded chunks from")
@@ -105,14 +105,16 @@ func main() {
 	}
 
 	// Load manifest
-	if manifestID != "" { // fetch specific manifest
-		log.Printf("Fetching manifest %s...", manifestID)
+	if manifestID != "" { // fetch specific manifest(s)
+		for _, id := range strings.Split(manifestID, ",") {
+			log.Printf("Fetching manifest %s...", id)
 
-		manifest, _, err := fetchManifest(fmt.Sprintf("%s/Builds/Fortnite/CloudDir/%s.manifest", defaultDownloadURL, manifestID))
-		if err != nil {
-			log.Fatalf("Failed to fetch manifest: %v", err)
+			manifest, _, err := fetchManifest(fmt.Sprintf("https://download-dynamic.epicgames.com/Builds/Fortnite/CloudDir/%s.manifest", id))
+			if err != nil {
+				log.Fatalf("Failed to fetch manifest: %v", err)
+			}
+			manifests = append(manifests, manifest)
 		}
-		manifests = append(manifests, manifest)
 	} else if manifestPath != "" { // read manifest(s) from disk
 		for _, manifestPath := range strings.Split(manifestPath, ",") {
 			// Check if folder
