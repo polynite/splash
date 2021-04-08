@@ -41,7 +41,7 @@ var (
 	killSignal         bool = false
 )
 
-const defaultDownloadURL = "http://epicgames-download1.akamaized.net"
+const defaultDownloadURL = "http://fastly-download.epicgames.com"
 
 func init() {
 	// Seed random
