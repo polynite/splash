@@ -109,7 +109,7 @@ func main() {
 		for _, id := range strings.Split(manifestID, ",") {
 			log.Printf("Fetching manifest %s...", id)
 
-			manifest, _, err := fetchManifest(fmt.Sprintf("https://download-dynamic.epicgames.com/Builds/Fortnite/CloudDir/%s.manifest", id))
+			manifest, _, err := fetchManifest(fmt.Sprintf("https://github.com/VastBlast/FortniteManifestArchive/raw/main/Fortnite/Windows/%s.manifest", id))
 			if err != nil {
 				log.Fatalf("Failed to fetch manifest: %v", err)
 			}
