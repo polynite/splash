@@ -41,6 +41,8 @@ var (
 	killSignal         bool = false
 )
 
+var version = "v0.0.0"
+
 const defaultDownloadURL = "http://epicgames-download1.akamaized.net"
 
 func init() {
@@ -76,6 +78,8 @@ func init() {
 }
 
 func main() {
+	fmt.Printf("splash %s\n", version)
+
 	var catalog *Catalog
 	manifests := make([]*Manifest, 0)
 
