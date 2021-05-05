@@ -1,5 +1,8 @@
 project_name: splash
 
+archives:
+  - format: binary
+
 builds:
   - env:
       - CGO_ENABLED=0
@@ -9,3 +12,6 @@ builds:
     goarch:
       - amd64
       - arm64
+
+checksum:
+  disable: true
