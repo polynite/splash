@@ -13,6 +13,7 @@ type Catalog struct {
 		LabelName    string `json:"labelName"`
 		BuildVersion string `json:"buildVersion"`
 		Hash         string `json:"hash"`
+		UseSignedUrl bool   `json:"useSignedUrl"`
 		Manifests    []struct {
 			URI         string `json:"uri"`
 			QueryParams []struct {
@@ -30,6 +31,11 @@ func (c *Catalog) GetManifestURL() string {
 			return m.URI
 		}
 
+		// Ignore options with multiple query params
+		if len(m.QueryParams) > 1 {
+			continue
+		}
+
 		// Build url
 		u, err := url.Parse(m.URI)
 		if err == nil {
@@ -42,9 +48,11 @@ func (c *Catalog) GetManifestURL() string {
 			}
 
 			// Set query
-			u.RawQuery = query.Encode()
+			u.RawQuery, err = url.QueryUnescape(query.Encode())
 
-			return u.String()
+			if err == nil {
+				return u.String()
+			}
 		}
 	}
 
