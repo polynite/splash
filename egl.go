@@ -13,7 +13,7 @@ const (
 	accountServiceURL  = "https://account-public-service-prod03.ol.epicgames.com"
 	launcherServiceURL = "https://launcher-public-service-prod06.ol.epicgames.com"
 
-	eglUserAgent   = "UELauncher/10.18.2-14031213+++Portal+Release-Live Windows/10.0.18363.1.256.64bit"
+	eglUserAgent   = "UELauncher/14.2.4-22208432+++Portal+Release-Live Windows/10.0.22000.1.256.64bit"
 	eglCredentials = "MzRhMDJjZjhmNDQxNGUyOWIxNTkyMTg3NmRhMzZmOWE6ZGFhZmJjY2M3Mzc3NDUwMzlkZmZlNTNkOTRmYzc2Y2Y="
 )
 
