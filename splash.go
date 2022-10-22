@@ -194,7 +194,11 @@ func main() {
 				chunkParentCount[c.GUID]++
 
 				if _, ok := manifestChunks[c.GUID]; !ok { // don't add duplicates
-					manifestChunks[c.GUID] = NewChunk(c.GUID, manifest.ChunkHashList[c.GUID], manifest.ChunkShaList[c.GUID], manifest.DataGroupList[c.GUID], manifest.ChunkFilesizeList[c.GUID])
+					if c.SizeInt != 0 {
+						manifestChunks[c.GUID] = NewChunkInt(c.GUID, manifest.ChunkHashList[c.GUID], manifest.ChunkShaList[c.GUID], manifest.DataGroupList[c.GUID], manifest.ChunkFilesizeListInt[c.GUID])
+					} else {
+						manifestChunks[c.GUID] = NewChunk(c.GUID, manifest.ChunkHashList[c.GUID], manifest.ChunkShaList[c.GUID], manifest.DataGroupList[c.GUID], manifest.ChunkFilesizeList[c.GUID])
+					}
 				}
 			}
 		}
@@ -306,7 +310,11 @@ func main() {
 			chunkJobs := make([]ChunkJob, chunkPartCount)
 			jobs := make(chan ChunkJob, chunkPartCount)
 			for i, chunkPart := range file.FileChunkParts {
-				chunkJobs[i] = ChunkJob{ID: i, Chunk: manifestChunks[chunkPart.GUID], Part: ChunkPart{Offset: readPackedUint32(chunkPart.Offset), Size: readPackedUint32(chunkPart.Size)}}
+				if chunkPart.OffsetInt != 0 || chunkPart.SizeInt != 0 {
+					chunkJobs[i] = ChunkJob{ID: i, Chunk: manifestChunks[chunkPart.GUID], Part: ChunkPart{Offset: chunkPart.OffsetInt, Size: chunkPart.SizeInt}}
+				} else {
+					chunkJobs[i] = ChunkJob{ID: i, Chunk: manifestChunks[chunkPart.GUID], Part: ChunkPart{Offset: readPackedUint32(chunkPart.Offset), Size: readPackedUint32(chunkPart.Size)}}
+				}
 				jobs <- chunkJobs[i]
 			}
 
@@ -404,7 +412,11 @@ func checkFile(f *os.File, file ManifestFile) (bool, error) {
 	// Calculate file size
 	var totalSize uint32 = 0
 	for _, chunk := range file.FileChunkParts {
-		totalSize += readPackedUint32(chunk.Size)
+		if chunk.SizeInt != 0 {
+			totalSize += chunk.SizeInt
+		} else {
+			totalSize += readPackedUint32(chunk.Size)
+		}
 	}
 
 	// Compare actual size

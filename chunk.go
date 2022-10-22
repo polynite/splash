@@ -96,6 +96,20 @@ func NewChunk(guid string, hash string, sha string, dataGroup string, fileSize s
 	}
 }
 
+func NewChunkInt(guid string, hash string, sha string, dataGroup string, fileSize uint64) Chunk {
+	dg, err := strconv.Atoi(dataGroup)
+	if err != nil {
+		log.Fatalf("Failed to convert datagroup %s: %v", dataGroup, err)
+	}
+
+	return Chunk{
+		GUID:      guid,
+		Hash:      hash,
+		DataGroup: dg,
+		FileSize:  int64(fileSize),
+	}
+}
+
 func readChunkHeader(r ReadSeekCloser) (ChunkHeader, error) {
 	// Initialize empty header
 	header := ChunkHeader{}
