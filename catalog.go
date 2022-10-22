@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"net/url"
-	"os"
 )
 
 // Catalog defines a catalog
@@ -57,23 +56,6 @@ func (c *Catalog) GetManifestURL() string {
 	}
 
 	return ""
-}
-
-// Load catalog from a file on disk
-func readCatalogFile(filename string) (catalog *Catalog, err error) {
-	// Open file
-	file, err := os.Open(filename)
-	if err != nil {
-		return
-	}
-	defer file.Close()
-
-	// Create new catalog instance
-	catalog = new(Catalog)
-
-	// Parse content
-	err = json.NewDecoder(file).Decode(catalog)
-	return
 }
 
 // Parse a catalog from bytes
