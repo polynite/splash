@@ -1,6 +1,8 @@
 # splash
 _Incredibly_ fast download/update tool.
 
+NOTE: downloading newer (binary) manifests are currently unsupported.
+
 ## Usage
 0. Build or acquire a [prebuilt binary](https://github.com/polynite/splash/releases) for your system.
 1. Get manifests from [polynite/fn-releases](https://github.com/polynite/fn-releases).
